@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-set "SWITCHER_APP=%~dp0dist-v1.1.0\CodexAccountSwitcher.exe"
+set "SWITCHER_APP=%~dp0dist-v1.2.0\CodexAccountSwitcher.exe"
 if not exist "%SWITCHER_APP%" goto build
 if not exist "%SWITCHER_APP%.config" goto build
 goto launch

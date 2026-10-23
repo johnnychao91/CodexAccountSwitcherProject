@@ -14,7 +14,8 @@ $files = @(
     'ProcessInspectorTests.cs', 'README.md', 'SelfTests.cs', 'SwitchWorkflow.cs',
     'SwitchWorkflowTests.cs', 'tests/FakeCodex.cs', 'tests/LaunchProbe.cs',
     'tests/ProcessProbe.cs', 'prepare-github.ps1', 'UsageModels.cs', 'UsageModelTests.cs',
-    'UsageSession.cs', 'UsageSessionTests.cs', 'tests/FakeUsageCodex.cs'
+    'UsageSession.cs', 'UsageSessionTests.cs', 'tests/FakeUsageCodex.cs',
+    'AccountOrderTests.cs', 'AccountUiTests.cs', 'docs/runtime-control-validation.md'
 )
 
 function Assert-NoReparsePoints([string]$Path) {

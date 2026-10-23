@@ -29,6 +29,8 @@ namespace CodexAccountSwitcher
             SwitchWorkflowTests.Register(test);
             UsageModelTests.Register(test);
             UsageSessionTests.Register(test);
+            AccountOrderTests.Register(test);
+            AccountUiTests.Register(test);
             string a = Auth("u1", "ws1", "one@example.com", "plus", "fake-refresh-old");
             string b = Auth("u2", "ws2", "two@example.com", "pro", "fake-refresh-b");
             string updated = Auth("u1", "ws1", "one@example.com", "plus", "fake-refresh-rotated");

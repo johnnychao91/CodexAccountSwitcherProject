@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -157,6 +157,19 @@ namespace CodexAccountSwitcher
             if (previous != null) Data.Accounts[Data.Accounts.IndexOf(previous)] = fresh;
             else Data.Accounts.Add(fresh);
             return fresh;
+        }
+        public bool Move(string id, int offset)
+        {
+            if (offset != -1 && offset != 1) throw new ArgumentOutOfRangeException("offset", "Move accepts only -1 or 1.");
+            int index = Data.Accounts.FindIndex(account => account.Id == id);
+            if (index < 0) return false;
+            int target = index + offset;
+            if (target < 0 || target >= Data.Accounts.Count) return false;
+            Account accountToMove = Data.Accounts[index];
+            Data.Accounts.RemoveAt(index);
+            Data.Accounts.Insert(target, accountToMove);
+            Save();
+            return true;
         }
         public void Remove(string id)
         {

@@ -12,12 +12,16 @@ using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace CodexAccountSwitcher
 {
     public sealed class AccountRow : INotifyPropertyChanged
     {
+        public static readonly TimeSpan UsageMaxAge = TimeSpan.FromMinutes(1);
         public Account Account { get; set; }
+        public int Priority { get; set; }
+        public string PriorityText { get { return "優先 " + Priority; } }
         public string Name { get { return Account.DisplayName; } }
         public string Initial { get { return Name.Substring(0, 1).ToUpperInvariant(); } }
         public string Detail { get { return Account.Detail; } }
@@ -26,14 +30,21 @@ namespace CodexAccountSwitcher
         public string Status { get; set; }
         public AccountUsage Usage { get; private set; }
         public string UsageNote { get; private set; }
+        public bool IsUsageRefreshing { get; private set; }
+        public UsageAvailability Availability
+        { get { return Usage == null || IsUsageRefreshing ? UsageAvailability.Unknown : Usage.GetAvailability(DateTimeOffset.UtcNow, UsageMaxAge); } }
+        public string AvailabilityText
+        { get { return IsUsageRefreshing ? "查詢中" : Availability == UsageAvailability.Available ? "額度可用" : Availability == UsageAvailability.Exhausted ? "額度已用完" : "狀態未知 · 請更新額度"; } }
+        public Brush AvailabilityBrush
+        { get { return Availability == UsageAvailability.Available ? Brushes.SeaGreen : Availability == UsageAvailability.Exhausted ? Brushes.Firebrick : Brushes.DimGray; } }
         public event PropertyChangedEventHandler PropertyChanged;
         public AccountRow() { UsageNote = "尚未查詢額度"; }
         public bool FiveHourAvailable { get { return Usage != null && Usage.FiveHour != null && Usage.FiveHour.RemainingPercent.HasValue; } }
         public bool WeeklyAvailable { get { return Usage != null && Usage.Weekly != null && Usage.Weekly.RemainingPercent.HasValue; } }
         public double FiveHourValue { get { return FiveHourAvailable ? Usage.FiveHour.RemainingPercent.Value : 0; } }
         public double WeeklyValue { get { return WeeklyAvailable ? Usage.Weekly.RemainingPercent.Value : 0; } }
-        public string FiveHourText { get { return FiveHourAvailable ? "剩餘 " + FiveHourValue.ToString("0.#") + "%" : Usage == null ? "—" : "未提供"; } }
-        public string WeeklyText { get { return WeeklyAvailable ? "剩餘 " + WeeklyValue.ToString("0.#") + "%" : Usage == null ? "—" : "未提供"; } }
+        public string FiveHourText { get { return FiveHourAvailable ? "剩餘 " + FiveHourValue.ToString("0.#") + "%" : Usage == null ? "—" : Usage.FiveHour == null ? "未提供" : "資料異常"; } }
+        public string WeeklyText { get { return WeeklyAvailable ? "剩餘 " + WeeklyValue.ToString("0.#") + "%" : Usage == null ? "—" : Usage.Weekly == null ? "未提供" : "資料異常"; } }
         public string FiveHourReset { get { return ResetText(Usage == null ? null : Usage.FiveHour); } }
         public string WeeklyReset { get { return ResetText(Usage == null ? null : Usage.Weekly); } }
         private static string ResetText(UsageWindow window)
@@ -46,15 +57,16 @@ namespace CodexAccountSwitcher
         public void Notify()
         { var handler = PropertyChanged; if (handler != null) handler(this, new PropertyChangedEventArgs(null)); }
         public void BeginUsage()
-        { UsageNote = Usage == null ? "正在查詢…" : "正在更新…（目前顯示上次資料）"; Notify(); }
+        { IsUsageRefreshing = true; UsageNote = Usage == null ? "正在查詢…" : "正在更新…（目前顯示上次資料）"; Notify(); }
         public void SetUsage(AccountUsage usage)
         {
             Usage = usage;
-            UsageNote = (usage.FiveHour == null && usage.Weekly == null ? "服務未提供這兩種上限 · " : "") + "更新於 " + usage.FetchedAt.ToLocalTime().ToString("HH:mm:ss");
+            IsUsageRefreshing = false;
+            UsageNote = (usage.HasMalformedData ? "額度資料異常 · " : usage.FiveHour == null && usage.Weekly == null ? "服務未提供這兩種上限 · " : usage.FiveHour == null && usage.Weekly != null ? "僅提供每週上限，依每週額度判斷 · " : "") + "更新於 " + usage.FetchedAt.ToLocalTime().ToString("HH:mm:ss");
             Notify();
         }
         public void UsageFailed(string message)
-        { Usage = null; UsageNote = message; Notify(); }
+        { IsUsageRefreshing = false; Usage = null; UsageNote = message; Notify(); }
     }
 
     public sealed class MainView
@@ -66,6 +78,7 @@ namespace CodexAccountSwitcher
         private Account current;
         private bool busy, demo;
         private CancellationTokenSource cancellation;
+        private readonly DispatcherTimer freshnessTimer;
         private T Element<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
         private void Click(string name, RoutedEventHandler handler) { Element<Button>(name).Click += handler; }
         private ListBox List { get { return Element<ListBox>("AccountList"); } }
@@ -83,6 +96,9 @@ namespace CodexAccountSwitcher
             Click("SaveButton", async delegate { Guard(SaveCurrent); await RefreshUsage(); });
             Click("RenameButton", delegate { Guard(Rename); });
             Click("RemoveButton", delegate { Guard(Remove); });
+            Click("MoveUpButton", delegate { Guard(delegate { MoveSelected(-1); }); });
+            Click("MoveDownButton", delegate { Guard(delegate { MoveSelected(1); }); });
+            Click("SelectPriorityButton", delegate { Guard(SelectPriority); });
             Click("AddButton", async delegate { await AddAccount(); });
             Click("SwitchButton", async delegate { if (Selected != null) await Switch(Selected.Auth); });
             Click("RestoreButton", async delegate { if (vault != null && vault.Data.PreviousAuth != null) await Switch(vault.Data.PreviousAuth, true); });
@@ -92,6 +108,15 @@ namespace CodexAccountSwitcher
             {
                 if (busy) { args.Cancel = true; cancellation.Cancel(); Status("正在取消操作，完成後即可關閉。"); }
             };
+            // Only refresh snapshot labels. This does not query accounts or switch logins.
+            freshnessTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            freshnessTimer.Tick += delegate
+            {
+                foreach (AccountRow row in List.Items) row.Notify();
+                UpdateRecommendation();
+            };
+            Window.Loaded += delegate { freshnessTimer.Start(); };
+            Window.Closed += delegate { freshnessTimer.Stop(); };
             if (demo) LoadDemo();
             else Window.Loaded += async delegate
             {
@@ -117,16 +142,21 @@ namespace CodexAccountSwitcher
         }
         private void UpdateButtons()
         {
-            foreach (string name in new[] { "AddButton", "SaveButton", "RefreshButton", "UsageButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton" })
+            foreach (string name in new[] { "AddButton", "SaveButton", "RefreshButton", "UsageButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton", "MoveUpButton", "MoveDownButton" })
                 Element<Button>(name).IsEnabled = !busy && (vault != null || demo);
             Element<Button>("SaveButton").IsEnabled &= current != null;
             foreach (string name in new[] { "RenameButton", "RemoveButton", "SwitchButton" }) Element<Button>(name).IsEnabled &= Selected != null;
             Element<Button>("SwitchButton").IsEnabled &= Selected != null && (current == null || Selected.Id != current.Id || (Selected.PendingLogin && Selected.Auth != currentRaw));
             Element<Button>("RestoreButton").IsEnabled &= vault != null && vault.Data.PreviousAuth != null;
             Element<Button>("UsageButton").IsEnabled &= List.Items.Count > 0;
+            Element<Button>("MoveUpButton").IsEnabled &= List.SelectedIndex > 0;
+            Element<Button>("MoveDownButton").IsEnabled &= List.SelectedIndex >= 0 && List.SelectedIndex < List.Items.Count - 1;
+            if (demo)
+                foreach (string name in new[] { "AddButton", "SaveButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton" }) Element<Button>(name).IsEnabled = false;
             List.IsEnabled = !busy;
             Element<Button>("CancelButton").IsEnabled = busy;
             Element<StackPanel>("ProgressActions").Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            UpdateRecommendation();
         }
         private void Refresh()
         {
@@ -140,11 +170,16 @@ namespace CodexAccountSwitcher
             { vault.Upsert(currentRaw, null); vault.Save(); }
             Element<TextBlock>("CurrentName").Text = current == null ? "尚未登入或使用其他儲存方式" : current.Email;
             Element<TextBlock>("CurrentDetail").Text = current == null ? "可先使用「新增帳號」完成登入。" : current.Plan.ToUpperInvariant() + "  ·  本機快取；實際登入狀態請在 Codex 確認";
+            RebuildRows(selectedId);
+        }
+        private void RebuildRows(string selectedId)
+        {
             var previousRows = List.Items.Cast<AccountRow>().ToList();
-            var rows = vault.Data.Accounts.Select(a =>
+            var rows = vault.Data.Accounts.Select((a, index) =>
             {
                 var row = previousRows.FirstOrDefault(r => r.Account.Id == a.Id && r.Account.Auth == a.Auth) ?? new AccountRow();
                 row.Account = a;
+                row.Priority = index + 1;
                 row.Status = a.PendingLogin ? "新登入，待套用" : current != null && a.Id == current.Id ? "目前帳號" : "已儲存";
                 row.Notify();
                 return row;
@@ -155,9 +190,58 @@ namespace CodexAccountSwitcher
             Element<StackPanel>("EmptyState").Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             UpdateButtons();
         }
+        private void MoveSelected(int direction)
+        {
+            if (busy || Selected == null) return;
+            string id = Selected.Id;
+            if (demo)
+            {
+                var rows = List.Items.Cast<AccountRow>().ToList();
+                int index = List.SelectedIndex, next = index + direction;
+                if (next < 0 || next >= rows.Count) return;
+                var row = rows[index]; rows.RemoveAt(index); rows.Insert(next, row);
+                for (int i = 0; i < rows.Count; i++) { rows[i].Priority = i + 1; rows[i].Notify(); }
+                List.ItemsSource = rows; List.SelectedItem = row;
+            }
+            else
+            {
+                if (vault == null || !vault.Move(id, direction)) return;
+                RebuildRows(id);
+            }
+            List.ScrollIntoView(List.SelectedItem);
+            Status("已更新優先順序，越上方越優先。目前 Codex 登入不變。");
+        }
+        private AccountRow RecommendedRow(DateTimeOffset now)
+        {
+            var rows = List.Items.Cast<AccountRow>().ToList();
+            var recommended = AccountUsage.SelectFirstEligible(rows.Select(r => r.Account),
+                account => { var row = rows.First(r => r.Account.Id == account.Id); return row.IsUsageRefreshing ? null : row.Usage; },
+                null, now, AccountRow.UsageMaxAge);
+            return recommended == null ? null : rows.First(r => r.Account.Id == recommended.Id);
+        }
+        private void UpdateRecommendation()
+        {
+            var recommended = RecommendedRow(DateTimeOffset.UtcNow);
+            Element<Button>("SelectPriorityButton").IsEnabled = !busy && recommended != null;
+            Element<TextBlock>("PriorityHint").Text = "越上方越優先 · 僅採用 1 分鐘內且未到重設時間的額度";
+        }
+        private void SelectPriority()
+        {
+            if (busy) return;
+            var row = RecommendedRow(DateTimeOffset.UtcNow);
+            if (row == null) { Status("沒有已確認可用的帳號，請更新額度；未知狀態不代表額度已用完。"); return; }
+            List.SelectedItem = row; List.ScrollIntoView(row);
+            Status("已選取優先 " + row.Priority + "「" + row.Name + "」，這是目前資料中順位最高且額度可用的帳號。" +
+                (current != null && row.Account.Id == current.Id && !row.Account.PendingLogin ? "目前已在使用此帳號。" : "按「切換並開啟 Codex」才會套用。"));
+        }
         private async Task RefreshUsage()
         {
-            if (demo) { LoadDemo(); return; }
+            if (demo)
+            {
+                foreach (AccountRow row in List.Items)
+                    if (row.Usage != null) { row.Usage.FetchedAt = DateTimeOffset.UtcNow; row.SetUsage(row.Usage); }
+                UpdateButtons(); return;
+            }
             if (busy || vault == null || List.Items.Count == 0) return;
             busy = true; cancellation = new CancellationTokenSource();
             Element<Button>("BrowserButton").Visibility = Visibility.Collapsed;
@@ -311,10 +395,10 @@ namespace CodexAccountSwitcher
             current.Label = "個人帳號"; work.Label = "工作帳號";
             Element<TextBlock>("CurrentName").Text = current.Email;
             Element<TextBlock>("CurrentDetail").Text = "PLUS  ·  示範資料";
-            var currentRow = new AccountRow { Account = current, Status = "目前帳號" };
+            var currentRow = new AccountRow { Account = current, Priority = 1, Status = "目前帳號" };
             currentRow.SetUsage(new AccountUsage { FiveHour = new UsageWindow { RemainingPercent = 80, ResetsAt = DateTimeOffset.UtcNow.AddHours(3) }, Weekly = new UsageWindow { RemainingPercent = 60, ResetsAt = DateTimeOffset.UtcNow.AddDays(6) }, FetchedAt = DateTimeOffset.UtcNow });
-            var workRow = new AccountRow { Account = work, Status = "已儲存" };
-            workRow.SetUsage(new AccountUsage { FiveHour = new UsageWindow { RemainingPercent = 35, ResetsAt = DateTimeOffset.UtcNow.AddHours(1) }, Weekly = new UsageWindow { RemainingPercent = 90, ResetsAt = DateTimeOffset.UtcNow.AddDays(4) }, FetchedAt = DateTimeOffset.UtcNow });
+            var workRow = new AccountRow { Account = work, Priority = 2, Status = "已儲存" };
+            workRow.SetUsage(new AccountUsage { Weekly = new UsageWindow { RemainingPercent = 90, ResetsAt = DateTimeOffset.UtcNow.AddDays(4) }, FetchedAt = DateTimeOffset.UtcNow });
             List.ItemsSource = new[] { currentRow, workRow };
             List.SelectedIndex = 1;
             Element<TextBlock>("AccountCount").Text = "2 個已儲存帳號";
@@ -331,7 +415,7 @@ namespace CodexAccountSwitcher
                     new ProcessSnapshot { Pid = 101, Name = "ChatGPT.exe", SessionId = 1 }
                 }, 1);
                 Status("尚未套用「work@example.com」。\n" + ProcessInspector.Describe(blockers) + "\n相關程序結束後會自動繼續，請等工具開啟 Codex。");
-                foreach (string name in new[] { "AddButton", "SaveButton", "RefreshButton", "UsageButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton" }) Element<Button>(name).IsEnabled = false;
+                foreach (string name in new[] { "AddButton", "SaveButton", "RefreshButton", "UsageButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton", "MoveUpButton", "MoveDownButton", "SelectPriorityButton" }) Element<Button>(name).IsEnabled = false;
                 Element<StackPanel>("ProgressActions").Visibility = Visibility.Visible;
             }
             Window.Show(); Window.UpdateLayout();

@@ -24,6 +24,13 @@ namespace CodexAccountSwitcher
             return new Dictionary<string, object> { { "rateLimits", Limits(primary, secondary) } };
         }
 
+        private static readonly DateTimeOffset EvaluationTime = new DateTimeOffset(2030, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        private static readonly TimeSpan Freshness = TimeSpan.FromMinutes(1);
+        private static AccountUsage Fresh(AccountUsage usage)
+        { usage.FetchedAt = EvaluationTime; return usage; }
+        private static AccountUsage Available()
+        { return Fresh(AccountUsage.Parse(Legacy(null, Window(10080, 25, null)))); }
+
         private static void FindProgressBars(DependencyObject parent, List<ProgressBar> bars)
         {
             for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
@@ -47,6 +54,123 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("A successful weekly-only or five-hour-only allowance is eligible without assuming a plan", delegate
+            {
+                var weekly = Available();
+                Check(weekly.FiveHour == null && weekly.Weekly.RemainingPercent == 75 && !weekly.HasMalformedData);
+                Check(weekly.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Available);
+                var fiveHour = Fresh(AccountUsage.Parse(Legacy(Window(300, 10, null), null)));
+                Check(fiveHour.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Available);
+                var limits = Limits(null, Window(10080, 25, null)); limits.Remove("primary");
+                weekly = Fresh(AccountUsage.Parse(new Dictionary<string, object> { { "rateLimits", limits } }));
+                Check(!weekly.HasMalformedData && weekly.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Available);
+            });
+            test("Any valid exhausted window blocks eligibility even when the other window is unavailable", delegate
+            {
+                foreach (var source in new[]
+                {
+                    Legacy(Window(300, 100, null), Window(10080, 10, null)),
+                    Legacy(Window(300, 10, null), Window(10080, 100, null)),
+                    Legacy(null, Window(10080, 100, null)),
+                    Legacy(Window(300, 100, null), Window(10080, "invalid", null))
+                })
+                {
+                    var usage = Fresh(AccountUsage.Parse(source));
+                    Check(usage.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Exhausted);
+                }
+            });
+            test("Omitted windows differ from malformed supplied data when selecting an account", delegate
+            {
+                Check(!Available().HasMalformedData);
+                foreach (object invalid in new object[] { "invalid-window", 1, new object[0], new Dictionary<string, object>(), Window("300", 10, null), Window(60, 10, null) })
+                {
+                    var usage = Fresh(AccountUsage.Parse(Legacy(invalid, Window(10080, 10, null))));
+                    Check(usage.HasMalformedData && usage.Weekly.RemainingPercent == 90);
+                    Check(usage.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+                }
+                var missing = Fresh(AccountUsage.Parse(Legacy(null, null)));
+                Check(!missing.HasMalformedData && missing.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+            });
+            test("Invalid percentages retain their display contract but cannot establish eligibility", delegate
+            {
+                foreach (object invalid in new object[] { null, "10", true, Double.NaN, Double.PositiveInfinity, -1, 101 })
+                {
+                    var usage = Fresh(AccountUsage.Parse(Legacy(Window(300, invalid, null), Window(10080, 20, null))));
+                    Check(usage.HasMalformedData && usage.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+                }
+                var clamped = Fresh(AccountUsage.Parse(Legacy(Window(300, 101, null), null)));
+                Check(clamped.FiveHour.RemainingPercent == 0 && clamped.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+            });
+            test("Malformed resets and duplicate durations cannot make an account eligible", delegate
+            {
+                var invalidReset = Fresh(AccountUsage.Parse(Legacy(null, Window(10080, 25, "invalid-reset"))));
+                Check(invalidReset.Weekly.RemainingPercent == 75 && invalidReset.Weekly.ResetsAt == null);
+                Check(invalidReset.HasMalformedData && invalidReset.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+                var duplicate = Fresh(AccountUsage.Parse(Legacy(Window(10080, 25, null), Window(10080, 50, null))));
+                Check(duplicate.HasMalformedData && duplicate.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+            });
+            test("Eligibility expires and rejects future samples or a disabled freshness period", delegate
+            {
+                var usage = Available();
+                Check(usage.GetAvailability(EvaluationTime + Freshness, Freshness) == UsageAvailability.Available);
+                Check(usage.GetAvailability(EvaluationTime + Freshness + TimeSpan.FromTicks(1), Freshness) == UsageAvailability.Unknown);
+                Check(usage.GetAvailability(EvaluationTime.AddTicks(-1), Freshness) == UsageAvailability.Unknown);
+                Check(usage.GetAvailability(EvaluationTime, TimeSpan.Zero) == UsageAvailability.Unknown);
+                Check(usage.GetAvailability(EvaluationTime, TimeSpan.FromSeconds(-1)) == UsageAvailability.Unknown);
+                usage.FetchedAt = default(DateTimeOffset);
+                Check(usage.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Unknown);
+            });
+            test("Reached reset times require a new sample instead of assuming available or exhausted", delegate
+            {
+                var usage = Available();
+                usage.Weekly.ResetsAt = EvaluationTime.AddSeconds(1);
+                Check(usage.GetAvailability(EvaluationTime, Freshness) == UsageAvailability.Available);
+                Check(usage.GetAvailability(EvaluationTime.AddSeconds(1), Freshness) == UsageAvailability.Unknown);
+                usage.Weekly.RemainingPercent = 0;
+                Check(usage.GetAvailability(EvaluationTime.AddSeconds(1), Freshness) == UsageAvailability.Unknown);
+                usage.Weekly.ResetsAt = null;
+                Check(usage.GetAvailability(EvaluationTime.AddMinutes(2), Freshness) == UsageAvailability.Unknown);
+            });
+            test("Candidate selection preserves caller order and does not rank by plan or percentage", delegate
+            {
+                var lowFirst = new Account { Id = "first", Plan = "plus" };
+                var highSecond = new Account { Id = "second", Plan = "pro" };
+                var ordered = new List<Account> { lowFirst, highSecond };
+                var lowUsage = Fresh(AccountUsage.Parse(Legacy(null, Window(10080, 99, null))));
+                int lookups = 0;
+                Func<Account, AccountUsage> lookup = account => { lookups++; return account.Id == "first" ? lowUsage : Available(); };
+                Check(AccountUsage.SelectFirstEligible(ordered, lookup, null, EvaluationTime, Freshness) == lowFirst);
+                Check(lookups == 1 && ordered[0] == lowFirst && ordered[1] == highSecond);
+                ordered.Reverse();
+                Check(AccountUsage.SelectFirstEligible(ordered, lookup, null, EvaluationTime, Freshness) == highSecond);
+            });
+            test("Candidate selection only excludes the current account when an identifier is supplied", delegate
+            {
+                var first = new Account { Id = "current" };
+                var next = new Account { Id = "next" };
+                var ordered = new[] { first, next };
+                Check(AccountUsage.SelectFirstEligible(ordered, account => Available(), null, EvaluationTime, Freshness) == first);
+                Check(AccountUsage.SelectFirstEligible(ordered, account => Available(), "current", EvaluationTime, Freshness) == next);
+                Check(AccountUsage.SelectFirstEligible(new[] { first }, account => Available(), "current", EvaluationTime, Freshness) == null);
+            });
+            test("Candidate selection skips failed missing malformed stale and exhausted samples", delegate
+            {
+                var states = new Dictionary<string, AccountUsage>
+                {
+                    { "failed", null },
+                    { "missing", Fresh(AccountUsage.Parse(Legacy(null, null))) },
+                    { "malformed", Fresh(AccountUsage.Parse(Legacy("invalid", Window(10080, 10, null)))) },
+                    { "stale", Available() },
+                    { "exhausted", Fresh(AccountUsage.Parse(Legacy(null, Window(10080, 100, null)))) },
+                    { "ready", Available() }
+                };
+                states["stale"].FetchedAt = EvaluationTime.AddMinutes(-2);
+                var ordered = new List<Account>();
+                foreach (string id in new[] { "failed", "missing", "malformed", "stale", "exhausted", "ready" }) ordered.Add(new Account { Id = id });
+                Check(AccountUsage.SelectFirstEligible(ordered, account => states[account.Id], null, EvaluationTime, Freshness) == ordered[5]);
+                ordered.RemoveAt(5);
+                Check(AccountUsage.SelectFirstEligible(ordered, account => states[account.Id], null, EvaluationTime, Freshness) == null);
+            });
             test("Usage cards create their actual WPF progress bindings and update after a refresh", delegate
             {
                 // Demo mode only constructs synthetic rows; it never loads the account vault.
