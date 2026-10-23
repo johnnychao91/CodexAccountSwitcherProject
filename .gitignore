@@ -23,6 +23,7 @@ test-data-*/
 .codex-home/
 CodexAccountSwitcher/
 login-*/
+usage-*/
 *.dpapi
 *.dpapi.*
 auth.json

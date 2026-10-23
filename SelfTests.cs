@@ -27,6 +27,8 @@ namespace CodexAccountSwitcher
             Action<string, Action> test = (name, action) => { try { action(); passed.Add(name); } catch (Exception ex) { failed.Add(name + ": " + ex.ToString()); } };
             ProcessInspectorTests.Register(test);
             SwitchWorkflowTests.Register(test);
+            UsageModelTests.Register(test);
+            UsageSessionTests.Register(test);
             string a = Auth("u1", "ws1", "one@example.com", "plus", "fake-refresh-old");
             string b = Auth("u2", "ws2", "two@example.com", "pro", "fake-refresh-b");
             string updated = Auth("u1", "ws1", "one@example.com", "plus", "fake-refresh-rotated");

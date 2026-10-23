@@ -13,7 +13,8 @@ $files = @(
     'Core.cs', 'DesktopLauncher.cs', 'MainWindow.xaml', 'ProcessInspector.cs',
     'ProcessInspectorTests.cs', 'README.md', 'SelfTests.cs', 'SwitchWorkflow.cs',
     'SwitchWorkflowTests.cs', 'tests/FakeCodex.cs', 'tests/LaunchProbe.cs',
-    'tests/ProcessProbe.cs', 'prepare-github.ps1'
+    'tests/ProcessProbe.cs', 'prepare-github.ps1', 'UsageModels.cs', 'UsageModelTests.cs',
+    'UsageSession.cs', 'UsageSessionTests.cs', 'tests/FakeUsageCodex.cs'
 )
 
 function Assert-NoReparsePoints([string]$Path) {

@@ -1,6 +1,16 @@
 # Codex 帳號切換器
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.0.2\CodexAccountSwitcher.exe`。建置產物留在本機，已由 `.gitignore` 排除。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.1.0\CodexAccountSwitcher.exe`。建置產物留在本機，已由 `.gitignore` 排除。
+
+## v1.1.0：各帳號的剩餘額度
+
+已儲存的帳號會各自顯示「5 小時上限」與「每週上限」的剩餘百分比、進度條、重設時間及最近查詢時間。開啟工具、儲存目前帳號或新增帳號後會查詢；也可按「更新全部額度」或「重新整理」手動更新。查詢期間可取消，不會切換目前的 Codex 登入。
+
+資料來自官方 [App Server 的 `account/rateLimits/read`](https://learn.chatgpt.com/docs/app-server)。依服務提供的視窗長度區分 5 小時與每週，剩餘量為 `100 - usedPercent`；重設時間以目前電腦時區顯示。未提供的額度會標示「未提供」，不視為無限、0% 或 100%。這些是查詢當下的快照；到達預計重設時間後仍需重新查詢，不會自行推算額度恢復，也不代表其他模型或工作區限制已解除。
+
+每次查詢都在 Windows 私有使用者資料目錄建立短暫的 `usage-<隨機識別碼>` 環境，透過標準輸入把該帳號的 access token 交給本機 Codex app-server；使用官方實驗性的 `chatgptAuthTokens` 模式與 ephemeral 憑證儲存。查詢不寫入使用中的 `auth.json`，不傳送 refresh token，也不輪替保存的憑證。標準輸出、錯誤訊息與權杖不寫入專案或日誌，額度只保存在視窗記憶體中。正常完成、失敗或取消時清除暫存；若強制結束工具而殘留目錄，關閉查詢後可移除私有資料目錄下的 `usage-*`。
+
+這項功能需要支援上述介面的 Codex CLI／桌面版。憑證過期、網路錯誤、服務拒絕或版本不支援時，個別帳號會顯示提示；若提示登入失效，請用「新增帳號」重新登入同一帳號後再查詢。每個帳號的查詢最多等待 30 秒，不會為了取得額度自動執行帳號切換或使用額度重設點數。
 
 ## v1.0.2 更新
 
@@ -8,7 +18,7 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 
 等待中的帳號尚未套用，請等工具完成，不要先手動重新開啟 Codex。等待最多 5 分鐘，逾時或取消都不會進入寫入步驟。所有相關程序退出後需通過一秒安靜期與再次檢查，才會保存、套用、讀回核對並啟動。工具不會強制關閉 VS Code 或終止你的工作。
 
-更新時，先取消舊版等待並關閉舊版切換器，再開啟 `dist-v1.0.2` 的新版；帳號庫沿用。根目錄的 `Codex帳號切換器.cmd` 已指向新版。
+更新時，先取消舊版等待並關閉舊版切換器，再開啟根目錄的 `Codex帳號切換器.cmd`；它會啟動 `dist-v1.1.0` 的新版，帳號庫沿用。
 
 ## v1.0.1 更新
 
@@ -31,7 +41,7 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 - 支援 `CODEX_HOME\auth.json` 的 ChatGPT 登入快取；未設定 `CODEX_HOME` 時使用 `%USERPROFILE%\.codex\auth.json`。
 - 使用同一快取的 CLI / IDE 會跟著變更帳號。這不是同時執行多個帳號的隔離環境。
 - 會辨識此電腦目前的 OpenAI.Codex 桌面套件，即使程式名稱已變為 ChatGPT.exe。
-- 不支援 keyring / auto / ephemeral 儲存、API Key、外部存取權杖與受管理的特殊登入流程。遇到已辨識的不相容設定會停止套用；組織政策仍由 Codex 自身執行，本工具不修改政策。
+- 帳號切換的來源快取不支援 keyring / auto / ephemeral 儲存、API Key、外部存取權杖與受管理的特殊登入流程；額度查詢會另外使用短暫的 ephemeral 環境。遇到已辨識的不相容設定會停止套用；組織政策仍由 Codex 自身執行，本工具不修改政策。
 - 帳號清單使用本機憑證中的顯示資訊，沒有驗證遠端登入有效性。存取權杖到期通常由 Codex 自行更新；已撤銷或失效的登入需用「新增帳號」重登。相同帳號的新登入會顯示「新登入，待套用」。
 - 切換只更換登入快取，不隔離聊天、專案或設定；各帳號的雲端資料可見性由 Codex 決定。
 - 此工具為獨立實作，沒有修改或注入 Codex 桌面 App，也不是官方多帳號 API。未保證日後版本仍採用相同快取格式。
@@ -66,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File .\prepare-github.ps1
 
 ## 開發與驗證
 
-在專案目錄執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，使用 Windows 內建的 .NET Framework C# 編譯器。沒有 NuGet 相依套件。原始碼為 `Core.cs`、`DesktopLauncher.cs`、`ProcessInspector.cs`、`SwitchWorkflow.cs`、`App.cs` 和內嵌的 `MainWindow.xaml`。程序診斷使用 Windows WMI，只讀取程序名稱、PID、父程序、工作階段與執行檔路徑，不讀取命令列或記憶體內容；無法確認程序狀態時停止切換。
+在專案目錄執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，使用 Windows 內建的 .NET Framework C# 編譯器。沒有 NuGet 相依套件。原始碼為 `Core.cs`、`DesktopLauncher.cs`、`ProcessInspector.cs`、`SwitchWorkflow.cs`、`App.cs`、`UsageModels.cs`、`UsageSession.cs` 和內嵌的 `MainWindow.xaml`。程序診斷使用 Windows WMI，只讀取程序名稱、PID、父程序、工作階段與執行檔路徑，不讀取命令列或記憶體內容；無法確認程序狀態時停止切換。
 
 執行假帳號測試（不會讀取或修改真實登入）：
 
