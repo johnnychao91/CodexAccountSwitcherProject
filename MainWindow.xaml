@@ -1,0 +1,102 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Codex 帳號切換器" Width="1080" Height="790" MinWidth="1040" MinHeight="710" WindowStartupLocation="CenterScreen" Background="#F5F6F8" FontFamily="Microsoft JhengHei UI, Segoe UI" FontSize="14" Foreground="#20282C">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#27322F"/>
+      <Setter Property="Padding" Value="17,11"/><Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="#DCE2E0"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+        <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.78"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="B" Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="ListBoxItem">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,10"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><Border x:Name="B" Background="White" BorderBrush="#E1E6E4" BorderThickness="1" CornerRadius="12" Padding="20,16"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#13866C"/><Setter TargetName="B" Property="Background" Value="#F0FAF6"/></Trigger><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="#A5BEB5"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="215"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Border Background="#152D27">
+      <Grid Margin="26,34,22,27">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+          <TextBlock Text="C /" FontSize="32" FontWeight="Bold" Foreground="#9CE3C5" Margin="0,0,0,28"/>
+          <TextBlock Text="Codex" Foreground="White" FontSize="26" FontWeight="SemiBold"/>
+          <TextBlock Text="帳號切換器" Foreground="#BCCFC7" FontSize="16" Margin="0,7,0,32"/>
+          <Border Background="#284A3E" CornerRadius="9" Padding="14,13"><TextBlock Text="◉   我的帳號" Foreground="#E8FFF2" FontWeight="SemiBold"/></Border>
+          <TextBlock x:Name="AccountCount" Text="0 個已儲存帳號" Foreground="#A4BDB1" Margin="14,14,0,0" FontSize="12"/>
+        </StackPanel>
+        <StackPanel Grid.Row="2">
+          <TextBlock Text="只在這台電腦保存" Foreground="#E0EDE6" FontWeight="SemiBold" Margin="0,0,0,8"/>
+          <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="#A4BDB1" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
+          <Border Height="1" Background="#365047" Margin="0,21,0,16"/>
+          <TextBlock Text="獨立工具 · v1.0.2&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Grid Grid.Column="1" Margin="32,31,32,25">
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Grid Margin="0,0,0,23">
+        <StackPanel><TextBlock Text="讓帳號切換更簡單" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="儲存常用帳號，下次直接選擇。" Foreground="#738078" Margin="0,7,0,0"/></StackPanel>
+        <Button x:Name="AddButton" Content="＋ 新增帳號" HorizontalAlignment="Right" VerticalAlignment="Center" Background="#12775D" Foreground="White" BorderBrush="#12775D"/>
+      </Grid>
+      <Border Grid.Row="1" Background="White" BorderBrush="#DFE6E2" BorderThickness="1" CornerRadius="14" Padding="23,19" Margin="0,0,0,24">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock Text="目前的本機登入" FontSize="12" Foreground="#6C7B72" Margin="0,0,0,8"/>
+            <TextBlock x:Name="CurrentName" Text="讀取中…" FontSize="19" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="CurrentDetail" Text="" Foreground="#687A71" FontSize="12" Margin="0,7,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+          <Button x:Name="SaveButton" Grid.Column="1" Content="儲存目前帳號" VerticalAlignment="Center" Margin="16,0,0,0"/>
+        </Grid>
+      </Border>
+      <Grid Grid.Row="2" Margin="0,0,0,12">
+        <TextBlock Text="已儲存帳號" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button x:Name="RenameButton" Content="重新命名" Padding="11,7" Margin="0,0,8,0"/>
+          <Button x:Name="RemoveButton" Content="移除" Padding="11,7" Margin="0,0,8,0"/>
+          <Button x:Name="RefreshButton" Content="重新整理" Padding="11,7"/>
+        </StackPanel>
+      </Grid>
+      <Grid Grid.Row="3">
+        <ListBox x:Name="AccountList" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
+          <ListBox.ItemTemplate><DataTemplate>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <Border Background="#E0EDE6" Width="34" Height="34" CornerRadius="17" VerticalAlignment="Top"><TextBlock Text="{Binding Initial}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#23684F" FontWeight="SemiBold"/></Border>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="16" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding Detail}" Foreground="#6D7973" FontSize="12" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding Workspace}" Foreground="#919B96" FontSize="11" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Margin="16,0,0,0" HorizontalAlignment="Right">
+                <TextBlock Text="{Binding Status}" Foreground="#14775B" FontSize="12" HorizontalAlignment="Right"/>
+                <TextBlock Text="{Binding Saved}" Foreground="#919B96" FontSize="10" Margin="0,8,0,0" HorizontalAlignment="Right"/>
+              </StackPanel>
+            </Grid>
+          </DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel x:Name="EmptyState" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="20">
+          <TextBlock Text="先收藏你的第一個帳號" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="按「儲存目前帳號」，或新增另一個 ChatGPT 登入。" TextWrapping="Wrap" TextAlignment="Center" Foreground="#7C8780" Margin="0,12,0,16"/>
+          <TextBlock Text="每個帳號只需先登入一次。" Foreground="#8D9691" FontSize="12" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+      <Border Grid.Row="4" Background="#EAF0EC" CornerRadius="10" Padding="16,13" Margin="0,16,0,18">
+        <StackPanel>
+          <TextBlock x:Name="StatusText" Text="準備就緒。選擇帳號後即可切換。" TextWrapping="Wrap" Foreground="#426051" LineHeight="22"/>
+          <StackPanel Orientation="Horizontal" Margin="0,6,0,0" x:Name="ProgressActions" Visibility="Collapsed">
+            <Button x:Name="CancelButton" Content="取消" Padding="12,6"/>
+            <Button x:Name="BrowserButton" Content="重新開啟登入網頁" Padding="12,6" Margin="8,0,0,0" Visibility="Collapsed"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+      <Grid Grid.Row="5">
+        <StackPanel VerticalAlignment="Center"><TextBlock Text="結束桌面與 VS Code 的 Codex → 自動切換" FontSize="12" Foreground="#52665A"/><TextBlock Text="等待期間尚未套用帳號，請等工具自動開啟。" FontSize="11" Foreground="#8A958E" Margin="0,5,0,0"/></StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button x:Name="RestoreButton" Content="切回上一個" Margin="8,0,10,0"/>
+          <Button x:Name="SwitchButton" Content="切換並開啟 Codex  →" Background="#12775D" BorderBrush="#12775D" Foreground="White"/>
+        </StackPanel>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>
