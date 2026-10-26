@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -115,6 +115,9 @@ namespace CodexAccountSwitcher
         public int Version { get; set; }
         public List<Account> Accounts { get; set; }
         public string PreviousAuth { get; set; }
+        public bool AutoMonitorEnabled { get; set; }
+        public bool AllowInterrupt { get; set; }
+        public bool? AutoContinueDesktop { get; set; }
         public VaultData() { Version = 1; Accounts = new List<Account>(); }
     }
 
@@ -209,14 +212,7 @@ namespace CodexAccountSwitcher
                 catch { }
                 finally { p.Dispose(); }
             }
-            // Handles the Store package and its branding change from Codex to ChatGPT.
-            string packages = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
-            try
-            {
-                foreach (string folder in Directory.GetDirectories(packages, "OpenAI.Codex_*").OrderByDescending(x => x))
-                    foreach (string name in new[] { "ChatGPT.exe", "Codex.exe" })
-                    { string path = Path.Combine(folder, "app", name); if (File.Exists(path)) return path; }
-            }
+            try { return DesktopLauncher.InstalledExecutable(); }
             catch { }
             return null;
         }
@@ -263,13 +259,15 @@ namespace CodexAccountSwitcher
         private readonly string home;
         private readonly Func<bool> busy;
         public SwitchService(Vault vault, string home, Func<bool> busy) { this.vault = vault; this.home = home; this.busy = busy; }
-        public void Apply(string targetRaw, bool restoring = false)
+        public void Apply(string targetRaw, bool restoring = false, string expectedSourceId = null)
         {
             Account target = Account.Parse(targetRaw);
             Installation.CheckConfig(home, target);
             if (busy()) throw new UserError("仍有 Codex 桌面、VS Code 擴充功能或 CLI 程序正在執行，尚未套用帳號。請關閉對應來源後再試。");
             string path = Path.Combine(home, "auth.json");
             string old = Files.ReadAuth(path);
+            if (expectedSourceId != null && (old == null || Account.Parse(old).Id != expectedSourceId))
+                throw new UserError("目前帳號已被其他程式變更，已停止自動切換，登入資料未修改。");
             var savedTarget = vault.Data.Accounts.FirstOrDefault(a => a.Id == target.Id);
             bool freshLogin = savedTarget != null && savedTarget.PendingLogin && savedTarget.Auth == targetRaw;
             if (old != null && Account.Parse(old).Id == target.Id && !freshLogin && !restoring)

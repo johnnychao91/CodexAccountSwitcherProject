@@ -11,6 +11,7 @@ test-data-*/
 *.exe
 *.dll
 *.pdb
+*.vsix
 *.zip
 *.7z
 *.rar
@@ -30,6 +31,8 @@ auth.json
 auth.json.*
 auth-*.json
 accounts*.json
+/integrations/vscode/config.json
+/integrations/vscode/runtimes/
 credentials*.json
 tokens*.json
 config.toml

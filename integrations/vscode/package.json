@@ -1,0 +1,19 @@
+{
+  "name": "codex-account-switcher-bridge",
+  "displayName": "Codex Account Switcher — Experimental Integration",
+  "description": "Optional local integration for the Codex Account Switcher. Requires explicit enablement.",
+  "version": "0.1.0",
+  "publisher": "local-account-switcher",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "extensionKind": ["workspace"],
+  "capabilities": { "untrustedWorkspaces": { "supported": false }, "virtualWorkspaces": false },
+  "contributes": {
+    "commands": [
+      { "command": "codexAccountSwitcher.enableIntegration", "title": "Codex Account Switcher: Enable Experimental Integration" },
+      { "command": "codexAccountSwitcher.disableIntegration", "title": "Codex Account Switcher: Disable Experimental Integration" }
+    ]
+  }
+}

@@ -18,7 +18,7 @@ namespace CodexAccountSwitcher
                 var blockers = ProcessInspector.FromSnapshots(items, 1);
                 Check(blockers.Count == 1 && blockers[0].Kind == "VSCode" && blockers[0].Pid == 100);
                 string reason = ProcessInspector.Describe(blockers);
-                Check(reason.Contains("VS Code") && reason.Contains("100") && reason.Contains("關閉所有 VS Code 視窗"));
+                Check(reason.Contains("VS Code") && reason.Contains("100") && reason.Contains("正常停止") && reason.Contains("關閉對應 VS Code 視窗"));
             });
             test("VS Code parent is recognized with an unavailable executable path", delegate
             {
@@ -47,6 +47,40 @@ namespace CodexAccountSwitcher
                     @"fixture\WindowsApps\OpenAI.Codex_1_x64__test\app\resources\codex.exe", "Code.exe"));
                 Check(blocker.Kind == "VSCode");
             });
+            test("An orphaned desktop relay remains a desktop blocker", delegate
+            {
+                var source = Snapshot(70, "DesktopAppRelay.exe", @"fixture\switcher\DesktopAppRelay.exe");
+                source.CreationTime = "synthetic-relay-creation";
+                var blockers = ProcessInspector.FromSnapshots(new[] { source,
+                    Snapshot(71, "DesktopAppRelay-helper.exe"), Snapshot(72, "DesktopAppRelay.exe", session: 2) }, 1);
+                Check(blockers.Count == 1 && blockers[0].Kind == "Desktop" && blockers[0].Pid == 70);
+                Check(blockers[0].CreationTime == source.CreationTime);
+            });
+            test("Downloaded desktop CLI remains a desktop blocker when its parent is gone", delegate
+            {
+                var first = Snapshot(51, "codex.exe", @"fixture\profile\OpenAI\Codex\bin\synthetic-version\codex.exe");
+                first.ParentPid = 900; first.CreationTime = "synthetic-cached-cli-creation";
+                var second = Snapshot(52, "CoDeX.ExE", "fixture/profile/openai/codex/bin/synthetic-version/codex.exe"); second.ParentPid = 901;
+                var similar = Snapshot(53, "codex.exe", @"fixture\profile\OpenAI\Codex\binary\codex.exe");
+                var blockers = ProcessInspector.FromSnapshots(new[] { first, second, similar }, 1);
+                Check(blockers.Count == 3 && blockers.Count(value => value.Kind == "Desktop") == 2);
+                Check(blockers.Single(value => value.Pid == 51).CreationTime == first.CreationTime);
+                Check(blockers.Single(value => value.Pid == 53).Kind == "CLI");
+                Check(ProcessInspector.Describe(blockers).Contains("系統匣"));
+            });
+            test("IDE parents and extension paths take precedence over downloaded desktop CLI paths", delegate
+            {
+                string cached = @"fixture\profile\OpenAI\Codex\bin\synthetic-version\codex.exe";
+                var editorChild = Snapshot(61, "codex.exe", cached); editorChild.ParentPid = 60;
+                var ideChild = Snapshot(63, "codex.exe", cached); ideChild.ParentPid = 62;
+                var blockers = ProcessInspector.FromSnapshots(new[] { Snapshot(60, "Code.exe"), editorChild,
+                    Snapshot(62, "Cursor.exe"), ideChild,
+                    Snapshot(64, "codex.exe", @"fixture\profile\.vscode\extensions\synthetic\OpenAI\Codex\bin\codex.exe"),
+                    Snapshot(65, "codex.exe", @"fixture\profile\.windsurf\extensions\synthetic\OpenAI\Codex\bin\codex.exe") }, 1);
+                Check(blockers.Count == 4 && blockers.Single(value => value.Pid == 61).Kind == "VSCode" &&
+                    blockers.Single(value => value.Pid == 63).Kind == "OtherIde" && blockers.Single(value => value.Pid == 64).Kind == "VSCode" &&
+                    blockers.Single(value => value.Pid == 65).Kind == "OtherIde");
+            });
             test("Standalone CLI and inaccessible process paths cannot be ignored", delegate
             {
                 var blockers = ProcessInspector.FromSnapshots(new[] { Snapshot(1, "codex.exe", @"fixture\tools\codex.exe", "pwsh.exe"), Snapshot(2, "codex.exe") }, 1);
@@ -69,6 +103,20 @@ namespace CodexAccountSwitcher
             {
                 var blockers = ProcessInspector.FromSnapshots(new ProcessSnapshot[0], 1);
                 Check(blockers.Count == 0 && ProcessInspector.Describe(blockers).Contains("可以套用帳號"));
+            });
+            test("Integration supervisors remain blockers and retain process creation identity", delegate
+            {
+                var source = Snapshot(41, "ManagedBridge.exe"); source.CreationTime = "synthetic-creation";
+                var blockers = ProcessInspector.FromSnapshots(new[] { source }, 1);
+                Check(blockers.Count == 1 && blockers[0].Kind == "Integration" && blockers[0].CreationTime == source.CreationTime);
+                Check(ProcessInspector.Describe(blockers).Contains("正常暫停"));
+            });
+            test("A desktop supervisor remains a blocker until its managed session is verified", delegate
+            {
+                var source = Snapshot(42, "DesktopRuntimeHost.exe"); source.CreationTime = "synthetic-desktop-creation";
+                var blockers = ProcessInspector.FromSnapshots(new[] { source, Snapshot(43, "DesktopRuntimeHost-helper.exe") }, 1);
+                Check(blockers.Count == 1 && blockers[0].Kind == "Integration" && blockers[0].CreationTime == source.CreationTime);
+                Check(blockers[0].Description.Contains("桌面") && ProcessInspector.Describe(blockers).Contains("桌面控制"));
             });
         }
     }

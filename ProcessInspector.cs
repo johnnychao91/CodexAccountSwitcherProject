@@ -15,6 +15,7 @@ namespace CodexAccountSwitcher
         public string Name { get; set; }
         public string ExecutablePath { get; set; }
         public string ParentName { get; set; }
+        public string CreationTime { get; set; }
     }
 
     public sealed class ProcessBlocker
@@ -23,6 +24,7 @@ namespace CodexAccountSwitcher
         public string Kind { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
+        public string CreationTime { get; set; }
     }
 
     public static class ProcessInspector
@@ -40,7 +42,7 @@ namespace CodexAccountSwitcher
         { return path.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0; }
 
         public static bool IsCandidate(string name)
-        { return IsName(name, "codex", "chatgpt"); }
+        { return IsName(name, "codex", "chatgpt", "ManagedBridge", "DesktopRuntimeHost", "DesktopAppRelay"); }
 
         // Classification only affects the explanation: every returned candidate blocks a switch.
         // Parent names are a diagnostic hint, never authority to terminate another process.
@@ -50,20 +52,24 @@ namespace CodexAccountSwitcher
             if (!IsCandidate(snapshot.Name)) throw new ArgumentException("Not a Codex process.", "snapshot");
             string path = (snapshot.ExecutablePath ?? "").Replace('/', '\\');
             string kind, description;
-            if (Contains(path, "\\.vscode\\extensions\\") || Contains(path, "\\.vscode-insiders\\extensions\\") ||
+            if (IsName(snapshot.Name, "DesktopAppRelay"))
+            { kind = "Desktop"; description = "Codex 桌面受管傳輸程序"; }
+            else if (IsName(snapshot.Name, "ManagedBridge", "DesktopRuntimeHost"))
+            { kind = "Integration"; description = IsName(snapshot.Name, "DesktopRuntimeHost") ? "桌面控制協調器" : "VS Code 實驗整合協調器"; }
+            else if (Contains(path, "\\.vscode\\extensions\\") || Contains(path, "\\.vscode-insiders\\extensions\\") ||
                 IsName(snapshot.ParentName, "code", "code-insiders"))
             { kind = "VSCode"; description = "VS Code 的 Codex 擴充套件"; }
             else if (Contains(path, "\\.cursor\\extensions\\") || Contains(path, "\\.windsurf\\extensions\\") ||
                 IsName(snapshot.ParentName, "cursor", "windsurf", "devenv", "rider64", "rider", "idea64", "idea", "pycharm64", "pycharm", "webstorm64", "webstorm", "clion64", "clion", "studio64", "antigravity"))
             { kind = "OtherIde"; description = "其他 IDE 的 Codex 工作程序"; }
             else if (IsName(snapshot.Name, "chatgpt") || IsName(snapshot.ParentName, "chatgpt") ||
-                (Contains(path, "\\openai.codex_") && Contains(path, "\\app\\")))
+                (Contains(path, "\\openai.codex_") && Contains(path, "\\app\\")) || Contains(path, "\\OpenAI" + "\\Codex" + "\\bin\\"))
             { kind = "Desktop"; description = "ChatGPT / Codex 桌面程式或背景程序"; }
             else if (!String.IsNullOrWhiteSpace(path))
             { kind = "CLI"; description = "Codex CLI 或其他 Codex 工作程序"; }
             else
             { kind = "Unknown"; description = "來源尚未辨識的 Codex 工作程序"; }
-            return new ProcessBlocker { Pid = snapshot.Pid, Kind = kind, Name = snapshot.Name ?? "codex", Description = description };
+            return new ProcessBlocker { Pid = snapshot.Pid, Kind = kind, Name = snapshot.Name ?? "codex", Description = description, CreationTime = snapshot.CreationTime };
         }
 
         public static List<ProcessBlocker> FromSnapshots(IEnumerable<ProcessSnapshot> snapshots, int sessionId)
@@ -79,7 +85,7 @@ namespace CodexAccountSwitcher
                 if (String.IsNullOrEmpty(parentName) && names.TryGetValue(snapshot.ParentPid, out parent) && parent.SessionId == sessionId)
                     parentName = parent.Name;
                 result.Add(Classify(new ProcessSnapshot { Pid = snapshot.Pid, ParentPid = snapshot.ParentPid,
-                    SessionId = snapshot.SessionId, Name = snapshot.Name, ExecutablePath = snapshot.ExecutablePath, ParentName = parentName }));
+                    SessionId = snapshot.SessionId, Name = snapshot.Name, ExecutablePath = snapshot.ExecutablePath, ParentName = parentName, CreationTime = snapshot.CreationTime }));
             }
             return result.OrderBy(value => value.Kind).ThenBy(value => value.Pid).ToList();
         }
@@ -93,7 +99,7 @@ namespace CodexAccountSwitcher
                 var snapshots = new List<ProcessSnapshot>();
                 var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromSeconds(5) };
                 using (var searcher = new ManagementObjectSearcher("root\\CIMV2",
-                    "SELECT Name, ProcessId, ParentProcessId, ExecutablePath, SessionId FROM Win32_Process", options))
+                    "SELECT Name, ProcessId, ParentProcessId, ExecutablePath, SessionId, CreationDate FROM Win32_Process", options))
                 using (var results = searcher.Get())
                     foreach (ManagementObject process in results)
                         using (process)
@@ -103,7 +109,7 @@ namespace CodexAccountSwitcher
                             if (pid == null || parentPid == null || session == null || String.IsNullOrWhiteSpace(name))
                                 throw new InvalidOperationException("Incomplete process inspection.");
                             snapshots.Add(new ProcessSnapshot { Pid = Convert.ToInt32(pid), ParentPid = Convert.ToInt32(parentPid),
-                                SessionId = Convert.ToInt32(session), Name = name, ExecutablePath = process["ExecutablePath"] as string });
+                                SessionId = Convert.ToInt32(session), Name = name, ExecutablePath = process["ExecutablePath"] as string, CreationTime = process["CreationDate"] as string });
                         }
                 return FromSnapshots(snapshots, sessionId);
             }
@@ -123,7 +129,8 @@ namespace CodexAccountSwitcher
                 string action;
                 switch (group.Key)
                 {
-                    case "VSCode": action = "請先儲存工作，再關閉所有 VS Code 視窗。"; break;
+                    case "VSCode": action = "請正常停止 Codex 擴充套件；未啟用實驗整合時，需儲存工作並關閉對應 VS Code 視窗。"; break;
+                    case "Integration": action = "請由桌面控制或 VS Code 整合正常暫停，或從對應桌面／IDE 程式正常結束。"; break;
                     case "OtherIde": action = "請先儲存工作，再關閉使用 Codex 的 IDE 或其 Codex 擴充套件。"; break;
                     case "Desktop": action = "請從選單或系統匣選「結束 / Quit」。"; break;
                     case "CLI": action = "請結束終端機中的 Codex 工作與其他使用 Codex 的工具。"; break;

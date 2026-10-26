@@ -15,18 +15,32 @@ $files = @(
     'SwitchWorkflowTests.cs', 'tests/FakeCodex.cs', 'tests/LaunchProbe.cs',
     'tests/ProcessProbe.cs', 'prepare-github.ps1', 'UsageModels.cs', 'UsageModelTests.cs',
     'UsageSession.cs', 'UsageSessionTests.cs', 'tests/FakeUsageCodex.cs',
-    'AccountOrderTests.cs', 'AccountUiTests.cs', 'docs/runtime-control-validation.md'
+    'AccountOrderTests.cs', 'AccountUiTests.cs', 'docs/runtime-control-validation.md',
+    'AutoSwitchController.cs', 'AutoSwitchTests.cs', 'QuotaResetTests.cs', 'QuotaResetIntegrationTests.cs', 'ManagedRuntimeClient.cs', 'ManagedRuntimeClientTests.cs',
+    'ManagedBridge.cs', 'ManagedBridgeProgram.cs', 'ManagedBridgeTests.cs',
+    'tests/FakeManagedBackend.cs', 'tests/CompanionTests.js', 'tests/Test-CleanClone.ps1',
+    'DesktopNative.cs', 'DesktopNativeTests.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopLocalWorkPolicyTests.cs', 'DesktopWebSocket.cs', 'DesktopWebSocketTests.cs',
+    'DesktopSession.cs', 'DesktopSessionTests.cs', 'DesktopHostProgram.cs', 'DesktopRuntimeCoordinator.cs', 'DesktopAutoStart.cs', 'DesktopAutoStartTests.cs',
+    'desktop-start.ps1', 'tests/FakeDesktopApp.cs',
+    'ContinuationTicket.cs', 'ContinuationTicketTests.cs', 'ContinuationAdmission.cs', 'ContinuationAdmissionTests.cs',
+    'DesktopConversationClient.cs', 'DesktopConversationClientTests.cs', 'DesktopContinuationWorkflow.cs', 'DesktopContinuationWorkflowTests.cs',
+    'DesktopAppRelay.cs', 'DesktopAppRelayTests.cs',
+    'integrations/vscode/package.json', 'integrations/vscode/extension.js', 'integrations/vscode/README.md',
+    'integrations/vscode/pack.ps1', 'integrations/vscode/extension.vsixmanifest', 'integrations/vscode/[Content_Types].xml'
 )
 
 function Assert-NoReparsePoints([string]$Path) {
     $cursor = [IO.Path]::GetFullPath($Path)
     while ($cursor) {
         try {
-            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            # File.GetAttributes also handles directories and literal bracketed VSIX filenames.
+            $attributes = [IO.File]::GetAttributes($cursor)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
                 throw "Refusing a symbolic link or reparse point in path: $cursor"
             }
-        } catch [System.Management.Automation.ItemNotFoundException] {
+        } catch [IO.FileNotFoundException] {
+            # A new destination file need not exist yet.
+        } catch [IO.DirectoryNotFoundException] {
             # A new destination can have ancestors that do not exist yet.
         }
         $parent = [IO.Directory]::GetParent($cursor)
@@ -63,6 +77,9 @@ if (-not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME) -and $env:COMPUTERNAME.
 }
 $emailPattern = '(?i)\b[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})\b'
 $exampleDomain = '(?i)(^|\.)example\.(com|org|net)$|\.test$'
+# These exact project identifiers resemble generated Windows names. This exception
+# applies only to that generic pattern; the current computer name is always checked.
+$projectHostLikeIdentifiers = @('desktop-start', 'desktop-transport', 'desktop-creation', 'desktop-diagnostics', 'desktop-handshake')
 $issues = New-Object 'System.Collections.Generic.List[string]'
 $hashes = @{}
 foreach ($relative in $files) {
@@ -80,8 +97,12 @@ foreach ($relative in $files) {
             }
         }
         foreach ($pattern in $patterns.GetEnumerator()) {
-            if ([regex]::IsMatch($lines[$index], $pattern.Value)) {
+            foreach ($match in [regex]::Matches($lines[$index], $pattern.Value)) {
+                if ($pattern.Key -eq 'Windows host name' -and $projectHostLikeIdentifiers -contains $match.Value) {
+                    continue
+                }
                 $issues.Add(('{0}:{1}: {2}' -f $relative, ($index + 1), $pattern.Key))
+                break
             }
         }
     }

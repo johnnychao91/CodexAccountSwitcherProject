@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
@@ -14,8 +16,90 @@ namespace CodexAccountSwitcher
 
     public static class DesktopLauncher
     {
+        private const string CodexPackageFamily = "OpenAI.Codex_2p2nqsd0c76g0";
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         private static extern int PackageFamilyNameFromFullName(string fullName, ref uint length, StringBuilder familyName);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int GetPackagesByPackageFamily(string familyName, ref uint count, IntPtr fullNames,
+            ref uint bufferLength, IntPtr buffer);
+
+        // Query the current user's registration rather than enumerating WindowsApps.
+        // Normal desktop users can read a known package while its parent directory
+        // denies listing, and the App need not already be running.
+        internal static string InstalledExecutable()
+        {
+            return InstalledExecutable(RegisteredPackages(), DesktopNative.PackagePath);
+        }
+
+        private static IList<string> RegisteredPackages()
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                uint count = 0, length = 0;
+                int result = GetPackagesByPackageFamily(CodexPackageFamily, ref count, IntPtr.Zero, ref length, IntPtr.Zero);
+                if (result == 0 && count == 0) return new List<string>();
+                if (result != 122 || count == 0 || count > 128 || length == 0 || length > 131072)
+                    return new List<string>();
+                IntPtr names = IntPtr.Zero, text = IntPtr.Zero;
+                try
+                {
+                    uint capacity = count;
+                    names = Marshal.AllocHGlobal(checked((int)count * IntPtr.Size));
+                    text = Marshal.AllocHGlobal(checked((int)length * 2));
+                    result = GetPackagesByPackageFamily(CodexPackageFamily, ref count, names, ref length, text);
+                    if (result == 122) continue; // A Store update changed the registration during lookup.
+                    if (result != 0 || count > capacity) return new List<string>();
+                    var packages = new List<string>();
+                    for (int index = 0; index < count; index++)
+                    {
+                        IntPtr name = Marshal.ReadIntPtr(names, index * IntPtr.Size);
+                        if (name != IntPtr.Zero) packages.Add(Marshal.PtrToStringUni(name));
+                    }
+                    return packages;
+                }
+                finally
+                {
+                    if (text != IntPtr.Zero) Marshal.FreeHGlobal(text);
+                    if (names != IntPtr.Zero) Marshal.FreeHGlobal(names);
+                }
+            }
+            return new List<string>();
+        }
+
+        private static Version PackageVersion(string fullName)
+        {
+            Version version;
+            string[] parts = (fullName ?? "").Split('_');
+            return parts.Length == 5 && Version.TryParse(parts[1], out version) ? version : new Version(0, 0);
+        }
+
+        internal static string InstalledExecutable(IEnumerable<string> packages, Func<string, string> packagePath)
+        {
+            foreach (string package in packages.OrderByDescending(PackageVersion))
+            {
+                string[] parts = (package ?? "").Split('_');
+                if (parts.Length != 5 || parts[0] != "OpenAI.Codex" || parts[4] != "2p2nqsd0c76g0") continue;
+                string root;
+                try { root = packagePath(package); }
+                catch { continue; } // A Store update may remove one registration during lookup.
+                if (String.IsNullOrWhiteSpace(root)) continue;
+                foreach (string name in new[] { "ChatGPT.exe", "Codex.exe" })
+                {
+                    try
+                    {
+                        string executable = Path.Combine(root, "app", name);
+                        if (!File.Exists(executable)) continue;
+                        var target = Resolve(executable);
+                        if (target.AppUserModelId != null && target.AppUserModelId.StartsWith(CodexPackageFamily + "!", StringComparison.Ordinal))
+                            return target.Executable;
+                    }
+                    catch { /* An obsolete branding candidate must not hide a valid App. */ }
+                }
+            }
+            return null;
+        }
 
         [ComImport, Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IApplicationActivationManager
