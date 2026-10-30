@@ -1,6 +1,6 @@
 # Codex 帳號切換器
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.5.3\CodexAccountSwitcher.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.5.4\CodexAccountSwitcher.exe`。
 
 ## 新電腦開始使用
 
@@ -9,6 +9,10 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
 需要自動切換與續聊時，開啟自動監看、桌面控制及桌面續聊。若 Codex 已在執行，先完成目前工作，再正常 Quit 一次，由切換器建立受管連線。桌面控制依賴 Codex 版本相容性；可選的 Local Work 封鎖另有版本檢查。
+
+## v1.5.4：自動續跑開關
+
+主畫面提供「開啟自動續跑／關閉自動續跑」按鈕，取代原本的勾選框，並保存開關選擇。按鈕只控制額度耗盡後的自動續跑，不會立即送出訊息。旁邊分別顯示功能開關、版本是否通過驗證，以及是否仍等待自動監看或桌面連線；版本未通過時，即使設定開啟也不會自動續跑。按「檢查工作狀態」可重新檢查版本相容性。
 
 ## v1.5.3：新版 Codex 啟動預檢
 
@@ -192,7 +196,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.5.3\codex-account-switcher-vscode.vsix`。
+1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.5.4\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Account Switcher: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。

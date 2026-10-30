@@ -17,6 +17,58 @@ namespace CodexAccountSwitcher
         }
         public static void Register(Action<string, Action> test)
         {
+            test("Automatic continuation button toggles its preference without sending or changing the selected account", delegate
+            {
+                var view = new MainView(true);
+                try
+                {
+                    var list = (ListBox)view.Window.FindName("AccountList");
+                    var selected = list.SelectedItem;
+                    string auth = ((AccountRow)selected).Account.Auth;
+                    Check(Button(view, "ContinueDesktopButton").Content.ToString() == "關閉自動續跑");
+                    Click(view, "ContinueDesktopButton");
+                    Check(Button(view, "ContinueDesktopButton").Content.ToString() == "開啟自動續跑");
+                    Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text == "自動續跑：已關閉");
+                    Click(view, "ContinueDesktopButton");
+                    Check(Button(view, "ContinueDesktopButton").Content.ToString() == "關閉自動續跑");
+                    Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("版本尚未確認"));
+                    Check(ReferenceEquals(selected, list.SelectedItem) && ((AccountRow)selected).Account.Auth == auth);
+                }
+                finally { view.Window.Close(); }
+            });
+            test("Automatic continuation badge distinguishes an enabled preference from an unsupported version and busy operations", delegate
+            {
+                var view = new MainView(true);
+                try
+                {
+                    var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                    typeof(MainView).GetField("continuationCompatible", flags).SetValue(view, false);
+                    typeof(MainView).GetMethod("UpdateButtons", flags).Invoke(view, null);
+                    Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("版本未通過驗證，暫不執行"));
+                    typeof(MainView).GetField("busy", flags).SetValue(view, true);
+                    typeof(MainView).GetMethod("UpdateButtons", flags).Invoke(view, null);
+                    Check(!Button(view, "ContinueDesktopButton").IsEnabled);
+                    typeof(MainView).GetField("busy", flags).SetValue(view, false);
+                }
+                finally { view.Window.Close(); }
+            });
+            test("Automatic continuation on and off preferences survive reopening the encrypted vault", delegate
+            {
+                string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "CodexAccountSwitcher-continue-toggle-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var vault = new Vault(root);
+                    vault.Data.AutoContinueDesktop = false; vault.Save();
+                    vault = new Vault(root); Check(vault.Data.AutoContinueDesktop == false);
+                    vault.Data.AutoContinueDesktop = true; vault.Save();
+                    Check(new Vault(root).Data.AutoContinueDesktop == true);
+                }
+                finally
+                {
+                    Check(System.IO.Path.GetDirectoryName(root).TrimEnd('\\') == System.IO.Path.GetTempPath().TrimEnd('\\'));
+                    ManagedBridge.EnsureNoReparsePoint(root); if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true);
+                }
+            });
             test("Account order buttons preserve selection, usage snapshots, and boundary states", delegate
             {
                 var view = new MainView(true);

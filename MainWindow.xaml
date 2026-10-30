@@ -31,7 +31,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="#E0EDE6" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="#A4BDB1" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="#365047" Margin="0,21,0,16"/>
-          <TextBlock Text="獨立工具 · v1.5.3&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
+          <TextBlock Text="獨立工具 · v1.5.4&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -127,7 +127,11 @@
             </StackPanel>
           </Grid>
           <CheckBox x:Name="InterruptCheck" Content="自動監看切換時允許正常中止回合（僅限已整合的 VS Code）" FontSize="12" Margin="0,0,0,6"/>
-          <CheckBox x:Name="ContinueDesktopCheck" Content="額度耗盡時正常中止桌面對話，切換後送出一次「繼續執行」" IsChecked="True" FontSize="12" Margin="0,0,0,6"/>
+          <Grid Margin="0,0,0,6">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Button x:Name="ContinueDesktopButton" Content="開啟自動續跑" Padding="12,7" FontWeight="SemiBold" Margin="0,0,12,0"/>
+            <TextBlock x:Name="ContinuationModeText" Grid.Column="1" Text="正在讀取自動續跑設定…" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold"/>
+          </Grid>
           <TextBlock x:Name="ContinuationStatusText" Text="全數耗盡時等待額度重置再續跑；結果不明時停止重送。" Foreground="#52665A" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"/>
           <TextBlock x:Name="AutoStatus" Text="自動監看已關閉。可在「桌面控制」管理受管桌面。" Foreground="#52665A" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"/>
           <TextBlock x:Name="DesktopControlStatusText" Text="正在讀取桌面控制設定…" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>

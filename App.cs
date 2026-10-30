@@ -88,6 +88,8 @@ namespace CodexAccountSwitcher
         private bool monitorRequested, suppressMonitorChange, manualOperation, manualFailed, closing;
         private bool demoDesktopControlRequested = true, desktopStateQuery, desktopAutoStartChecking;
         private bool desktopConnected;
+        private bool demoContinueRequested = true;
+        private bool? continuationCompatible;
         private int desktopConnectionRefreshTicks;
         private string desktopConnectionText = "尚未檢查連線";
         private T Element<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
@@ -122,7 +124,7 @@ namespace CodexAccountSwitcher
             Element<CheckBox>("MonitorCheck").Checked += async delegate { if (!suppressMonitorChange) await SetMonitoring(true); };
             Element<CheckBox>("MonitorCheck").Unchecked += async delegate { if (!suppressMonitorChange) await SetMonitoring(false); };
             Element<CheckBox>("InterruptCheck").Click += delegate { Guard(delegate { if (vault != null) { vault.Data.AllowInterrupt = Element<CheckBox>("InterruptCheck").IsChecked == true; vault.Save(); } }); };
-            Element<CheckBox>("ContinueDesktopCheck").Click += async delegate { await RunManual(delegate { if (vault != null) { vault.Data.AutoContinueDesktop = Element<CheckBox>("ContinueDesktopCheck").IsChecked == true; vault.Save(); } return Task.FromResult(0); }); };
+            Click("ContinueDesktopButton", async delegate { await ToggleContinuation(); });
             Window.Closing += async delegate(object sender, System.ComponentModel.CancelEventArgs args)
             {
                 if (closing) return;
@@ -155,6 +157,7 @@ namespace CodexAccountSwitcher
             else Window.Loaded += async delegate
             {
                 Guard(delegate { desktop = Installation.DesktopExe(); vault = new Vault(storage); CreateAutomatic(); runtimes.Desktop.InitializeControlPreference(); Refresh(); });
+                await RefreshContinuationCompatibility();
                 if (continuation != null) await continuation.RecoverPendingAsync();
                 if (continuation != null && continuation.WaitingForQuotaSourceId != null &&
                     (!vault.Data.AutoMonitorEnabled || !(vault.Data.AutoContinueDesktop ?? true) || !runtimes.Desktop.ControlRequested))
@@ -212,7 +215,47 @@ namespace CodexAccountSwitcher
                 UpdateButtons();
             };
             Element<CheckBox>("InterruptCheck").IsChecked = vault.Data.AllowInterrupt;
-            Element<CheckBox>("ContinueDesktopCheck").IsChecked = vault.Data.AutoContinueDesktop ?? true;
+            UpdateContinuationButton();
+        }
+
+        private bool ContinuationRequested { get { return demo ? demoContinueRequested : vault != null && (vault.Data.AutoContinueDesktop ?? true); } }
+        private async Task ToggleContinuation()
+        {
+            if (busy || manualOperation || automatic != null && automatic.IsRunning) return;
+            if (demo) { demoContinueRequested = !demoContinueRequested; UpdateButtons(); return; }
+            if (vault == null) return;
+            await RunManual(delegate
+            {
+                vault.Data.AutoContinueDesktop = !ContinuationRequested;
+                vault.Save();
+                Status(ContinuationRequested ? "自動續跑設定已開啟；版本相容、自動監看及桌面連線均就緒後才會觸發，按鈕不會立即送出訊息。" : "自動續跑已關閉；不會自動送出「繼續執行」。");
+                return Task.FromResult(0);
+            });
+        }
+        private async Task RefreshContinuationCompatibility()
+        {
+            bool supported = false;
+            try { supported = await Task.Run(delegate { DesktopLocalWorkPolicy.ValidateTarget(DesktopPackageTarget.Resolve(desktop)); return true; }); }
+            catch { }
+            continuationCompatible = supported;
+            UpdateContinuationButton();
+        }
+        private void UpdateContinuationButton()
+        {
+            bool requested = ContinuationRequested;
+            var button = Element<Button>("ContinueDesktopButton");
+            button.Content = requested ? "關閉自動續跑" : "開啟自動續跑";
+            button.Background = new SolidColorBrush(requested ? Color.FromRgb(18, 119, 93) : Colors.White);
+            button.Foreground = new SolidColorBrush(requested ? Colors.White : Color.FromRgb(18, 119, 93));
+            button.BorderBrush = new SolidColorBrush(Color.FromRgb(18, 119, 93));
+            button.ToolTip = "記住此開關；不會立即送出訊息。需版本相容、自動監看及受管桌面連線。";
+            var label = Element<TextBlock>("ContinuationModeText");
+            label.Text = !requested ? "自動續跑：已關閉" : continuationCompatible == false ?
+                "自動續跑：設定已開啟 · Codex 版本未通過驗證，暫不執行" : !continuationCompatible.HasValue ?
+                "自動續跑：設定已開啟 · 版本尚未確認" : !monitorRequested ?
+                "自動續跑：已開啟 · 等待開啟自動監看" : !desktopConnected ?
+                "自動續跑：已開啟 · 等待桌面連線" : "自動續跑：已開啟 · 等待額度觸發";
+            label.Foreground = new SolidColorBrush(requested && continuationCompatible != true ? Color.FromRgb(148, 97, 21) : Color.FromRgb(18, 119, 93));
         }
 
         private DesktopContinuationWorkflow CreateContinuationWorkflow()
@@ -368,6 +411,7 @@ namespace CodexAccountSwitcher
             {
                 var result = await runtimes.InspectAsync(CancellationToken.None); Status(result.Describe());
                 await RefreshDesktopControlState();
+                await RefreshContinuationCompatibility();
             }
             catch (Exception ex) { ShowError(ex); }
             UpdateButtons();
@@ -436,7 +480,7 @@ namespace CodexAccountSwitcher
                 }
             }
             catch { desktopConnected = false; desktopConnectionText = "無法確認連線，請檢查工作狀態"; }
-            finally { desktopStateQuery = false; UpdateDesktopControlIndicator(); }
+            finally { desktopStateQuery = false; UpdateDesktopControlIndicator(); UpdateContinuationButton(); }
         }
         private async Task TryStartDesktopAutomatically()
         {
@@ -691,7 +735,8 @@ namespace CodexAccountSwitcher
             Element<StackPanel>("ProgressActions").Visibility = busy || autoRunning ? Visibility.Visible : Visibility.Collapsed;
             Element<CheckBox>("MonitorCheck").IsEnabled = !demo && vault != null && !manualOperation && !busy;
             Element<CheckBox>("InterruptCheck").IsEnabled = !demo && vault != null && !manualOperation && !busy && !autoRunning;
-            Element<CheckBox>("ContinueDesktopCheck").IsEnabled = !demo && vault != null && !manualOperation && !busy && !autoRunning;
+            Element<Button>("ContinueDesktopButton").IsEnabled = (demo || vault != null) && !manualOperation && !busy && !autoRunning;
+            UpdateContinuationButton();
             Element<Button>("RuntimeButton").IsEnabled = !demo && vault != null && !manualOperation && !busy && !autoRunning;
             Element<Button>("DesktopControlButton").IsEnabled = (demo || runtimes != null) && !busy && !manualOperation && !autoRunning;
             Element<Button>("IntegrationButton").IsEnabled = !busy && !manualOperation && !autoRunning;
