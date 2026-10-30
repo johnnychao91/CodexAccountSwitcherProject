@@ -106,6 +106,15 @@ namespace CodexAccountSwitcher
                 Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.VerifiedArchiveLength, digest)), "An unreviewed archive hash was accepted.");
                 Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.VerifiedArchiveLength, null)), "A missing hash was accepted.");
             });
+            test("Current desktop Local Work compatibility rejects same-size changes and cross-version digests", delegate
+            {
+                var digest = new byte[32];
+                for (int i = 0; i < digest.Length; i++) digest[i] = Convert.ToByte(DesktopLocalWorkPolicy.UpdatedArchiveSha256.Substring(i * 2, 2), 16);
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, digest);
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.VerifiedArchiveLength, digest)), "A digest from another version was accepted.");
+                digest[0] ^= 1;
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, digest)), "A changed current-version archive was accepted.");
+            });
             test("Desktop Local Work opt-out refuses missing changed and non-file App archives before environment changes", delegate
             {
                 using (var fixture = new Fixture())

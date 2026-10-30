@@ -21,6 +21,28 @@ async function main() {
       }
     } }
     walk(tree);
+    const work = scripts.find(s => s.includes('async startOnce(){') && s.includes('CODEX_TPP_LOCAL_EXECUTOR_CLI_PATH')); assert(work);
+    const workStart = work.indexOf('async startOnce(){'), workEnd = work.indexOf('handleConnectionEvent(', workStart + 6500);
+    assert(workEnd > workStart && workEnd - workStart < 10000);
+    const errorStart = work.indexOf('class E5 extends Error{'), errorEnd = work.indexOf('function E8(', errorStart);
+    assert(errorStart > 0 && errorEnd > errorStart);
+    const NativeError = vm.runInNewContext('(' + work.slice(errorStart, errorEnd) + ')', {}, { timeout: 1000 });
+    for (const kind of ['directory', 'missing', 'file']) {
+      let registrations = 0, restarts = 0, registryOptions = 0;
+      const native = vm.runInNewContext('({' + work.slice(workStart, workEnd) + '})', {
+        process: { platform: 'win32', env: { CODEX_TPP_LOCAL_EXECUTOR_CLI_PATH: 'synthetic-override' } }, EL: 'CODEX_TPP_LOCAL_EXECUTOR_CLI_PATH',
+        ei: { resolve: value => value }, eb: { statSync() { if (kind === 'missing') throw Error('synthetic-missing'); return { isFile: () => kind === 'file' }; } },
+        E5: NativeError, E8() { registryOptions++; return {}; }, E4: () => 'synthetic-error'
+      }, { timeout: 1000 });
+      const executor = { lifetime: { signal: { aborted: false } }, attempt: 0, state: {}, disposed: false, enabled: true, options: {},
+        invalidateReadiness() {}, resetThreadReadiness() {}, appendDiagnostic() {}, logger: () => ({ info() {}, warning() {} }),
+        connectionObservations: { processFailed() {} }, reportFailure() {}, scheduleRestart() { restarts++; },
+        async registerExecutor() { registrations++; throw new NativeError('synthetic-stop-before-network', false); } };
+      await native.startOnce.call(executor);
+      assert.strictEqual(registrations, kind === 'file' ? 1 : 0); assert.strictEqual(registryOptions, kind === 'file' ? 1 : 0);
+      assert.strictEqual(restarts, 0); assert.strictEqual(executor.state.ready, false);
+      if (kind !== 'file') assert(executor.state.error.includes('must point to an executable file'));
+    }
     const text = scripts.find(s => s.includes('"thread-owner-discovery":1,"thread-follower-start-turn":2')); assert(text);
     const point = text.indexOf('"thread-owner-discovery":1,"thread-follower-start-turn":2');
     const begin = text.lastIndexOf('={', point) + 1, end = text.indexOf('};function ', point) + 1; assert(begin > 0 && end > begin);
@@ -43,7 +65,7 @@ async function main() {
     const continued = await dispatch(owner, request); assert.strictEqual(continued.result.result.turn.id, 'new-turn'); assert.strictEqual(sends, 1);
     await assert.rejects(dispatch({ ...owner, assertThreadFollowerOwner() { throw Error('synthetic-owner-change'); } }, request)); assert.strictEqual(sends, 1);
     await assert.rejects(dispatch({ ...owner, async startTurn() { sends++; throw Error('synthetic-lost-reply'); } }, request)); assert.strictEqual(sends, 2);
-    console.log(JSON.stringify({ passed: 5, reviewedPackage: '26.1027.3384.0', actualBundleDispatch: true, syntheticOnly: true, appStarted: false }));
+    console.log(JSON.stringify({ passed: 8, reviewedPackage: '26.1027.3384.0', actualBundleDispatch: true, localWorkStartupVerified: true, syntheticOnly: true, appStarted: false }));
   } finally { fs.closeSync(fd); }
 }
 main().catch(() => { console.error('Reviewed continuation protocol test failed; no App requests were sent.'); process.exitCode = 1; });

@@ -13,6 +13,8 @@ namespace CodexAccountSwitcher
         internal const string InitialEnable = "CODEX_TPP_LOCAL_EXECUTOR_ENABLED";
         internal const long VerifiedArchiveLength = 640129388;
         internal const string VerifiedArchiveSha256 = "04862A659C6A90FC50514D8C0B8016709D97DECE58839726C57495ED72F1D9F0";
+        internal const long UpdatedArchiveLength = 674296148;
+        internal const string UpdatedArchiveSha256 = "6FBEDF054A8D8CAFAF5C745B40AA59176512E106E0BD6308275AE123B60FD074";
         private const string UnsupportedVersion = "目前 Codex 桌面版本尚未通過 Local Work 封鎖相容性驗證。請先關閉 Local Work 封鎖選項，或更新切換器後再啟動受管桌面。";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -28,7 +30,7 @@ namespace CodexAccountSwitcher
         private static extern bool ReadArchiveInformation(SafeFileHandle file, out ArchiveInformation information);
 
         internal static void ValidateTarget(DesktopPackageTarget target)
-        { ValidateArchive(target, length => length == VerifiedArchiveLength, ValidateArchiveDigest, UnsupportedVersion); }
+        { ValidateArchive(target, length => length == VerifiedArchiveLength || length == UpdatedArchiveLength, ValidateArchiveDigest, UnsupportedVersion); }
 
         // Shared file identity reader only; each feature supplies its own policy.
         internal static void ValidateArchive(DesktopPackageTarget target, Func<long, bool> acceptsLength,
@@ -71,8 +73,9 @@ namespace CodexAccountSwitcher
 
         internal static void ValidateArchiveDigest(long length, byte[] digest)
         {
-            if (length != VerifiedArchiveLength || digest == null || digest.Length != 32 ||
-                !String.Equals(BitConverter.ToString(digest).Replace("-", ""), VerifiedArchiveSha256, StringComparison.Ordinal))
+            string expected = length == VerifiedArchiveLength ? VerifiedArchiveSha256 : length == UpdatedArchiveLength ? UpdatedArchiveSha256 : null;
+            if (expected == null || digest == null || digest.Length != 32 ||
+                !String.Equals(BitConverter.ToString(digest).Replace("-", ""), expected, StringComparison.Ordinal))
                 throw new UserError(UnsupportedVersion);
         }
 
@@ -103,7 +106,7 @@ namespace CodexAccountSwitcher
                 throw new UserError("無法驗證受管桌面的私人工作目錄，Local Work 封鎖尚未套用。");
             }
             // Experimental availability block, not a native App on/off preference.
-            // In the pinned App, uje() rejects a directory as a non-retryable error
+            // In both reviewed Apps, executor resolution rejects a directory as a non-retryable error
             // before cloud registration or exec-server spawn. ENABLED=0 alone is
             // insufficient: the renderer can subsequently authorize the feature.
             // Set only the executor-specific override; keep the local CLI/backend intact.

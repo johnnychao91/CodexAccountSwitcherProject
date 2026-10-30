@@ -29,15 +29,16 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
-            test("Continuation compatibility accepts both reviewed archive profiles while Local Work remains independently pinned", delegate
+            test("Continuation and Local Work independently accept their reviewed archive profiles", delegate
             {
                 Func<string, byte[]> decode = hex => Enumerable.Range(0, hex.Length / 2).Select(i => Convert.ToByte(hex.Substring(i * 2, 2), 16)).ToArray();
                 var legacy = decode(DesktopContinuationCompatibility.LegacyArchiveSha256);
                 var updated = decode(DesktopContinuationCompatibility.UpdatedArchiveSha256);
                 DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.LegacyArchiveLength, legacy);
                 DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, updated);
-                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, updated)),
-                    "Continuation support silently enabled the unreviewed Local Work patch.");
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, updated);
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength + 1, updated)),
+                    "An unknown Local Work version was accepted.");
                 Check(DesktopContinuationCompatibility.OwnerVersion == 1 && DesktopContinuationCompatibility.InterruptVersion == 4 &&
                     DesktopContinuationCompatibility.StartVersion == 2, "The reviewed IPC versions changed.");
             });

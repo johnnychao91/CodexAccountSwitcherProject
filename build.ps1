@@ -3,7 +3,7 @@ $projectRoot = $PSScriptRoot
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework = Split-Path $compiler
 $wpf = Join-Path $framework 'WPF'
-$release = Join-Path $projectRoot 'dist-v1.5.5'
+$release = Join-Path $projectRoot 'dist-v1.6.0'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
