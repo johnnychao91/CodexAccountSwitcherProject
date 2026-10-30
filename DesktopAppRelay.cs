@@ -209,10 +209,21 @@ namespace CodexAccountSwitcher
                 !DesktopNative.Equal(snapshot.Host, host) ||
                 !ValidParentBinding(self, app, host, expectedRelay, Path.GetFullPath(appPath), Path.GetFullPath(hostPath), DesktopNative.Same, DesktopNative.IsDescendant))
                 throw new IOException("Managed relay private catalog identity changed.");
-            var target = DesktopPackageTarget.Resolve(snapshot.App.ExecutablePath);
-            DesktopLocalWorkPolicy.ValidateTarget(target);
-            if (String.Equals(Path.GetFullPath(target.CliExecutable), selfPath, StringComparison.OrdinalIgnoreCase)) throw new IOException("Recursive relay target.");
+            var target = ResolveRelayTarget(snapshot.App.ExecutablePath, selfPath);
             return Tuple.Create(target, host);
+        }
+        internal static DesktopPackageTarget ResolveRelayTarget(string appExecutable, string relayExecutable)
+        { return ResolveRelayTarget(appExecutable, relayExecutable, DesktopPackageTarget.Resolve); }
+        internal static DesktopPackageTarget ResolveRelayTarget(string appExecutable, string relayExecutable,
+            Func<string, DesktopPackageTarget> resolvePackage)
+        {
+            // The relay forwards the installed package's CLI; it does not patch
+            // the App archive. The optional Local Work policy is validated by
+            // the Host before launch and must not gate ordinary startup probes.
+            var target = resolvePackage(appExecutable);
+            if (String.Equals(Path.GetFullPath(target.CliExecutable), Path.GetFullPath(relayExecutable), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Recursive relay target.");
+            return target;
         }
 
         internal static void VerifyListener(DesktopProcessIdentity host, int port)

@@ -16,6 +16,38 @@ namespace CodexAccountSwitcher
         private static bool Rejected(Action operation) { try { operation(); return false; } catch { return true; } }
         public static void Register(Action<string, Action> test)
         {
+            test("Desktop relay accepts an upgraded package without bypassing Local Work version or recursive target checks", delegate
+            {
+                string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-relay-package-" + Guid.NewGuid().ToString("N"));
+                string package = Path.Combine(root, "OpenAI.Codex_26.1027.3384.0_x64__2p2nqsd0c76g0");
+                string app = Path.Combine(package, "app", "ChatGPT.exe");
+                string cli = Path.Combine(package, "app", "resources", "codex.exe");
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(cli));
+                    File.WriteAllText(app, "synthetic App"); File.WriteAllText(cli, "synthetic CLI");
+                    File.WriteAllText(Path.Combine(package, "AppxManifest.xml"), "<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\"><Applications><Application Id=\"App\" Executable=\"app/ChatGPT.exe\"/></Applications></Package>");
+                    File.WriteAllText(Path.Combine(Path.GetDirectoryName(cli), "app.asar"), "synthetic updated archive");
+                    Func<string, DesktopPackageTarget> resolve = path => {
+                        Check(path == app, "The resolver received another App path.");
+                        Check(DesktopLauncher.Resolve(path).AppUserModelId == "OpenAI.Codex_2p2nqsd0c76g0!App", "The manifest was not resolved.");
+                        if (!File.Exists(cli)) throw new IOException("Synthetic backend missing.");
+                        return new DesktopPackageTarget { AppExecutable = path, CliExecutable = cli, AppId = "App" };
+                    };
+                    var target = DesktopAppRelay.ResolveRelayTarget(app, Path.Combine(root, "DesktopAppRelay.exe"), resolve);
+                    Check(target.CliExecutable == cli && target.AppId == "App", "An upgraded package could not resolve its own CLI.");
+                    Check(Rejected(() => DesktopLocalWorkPolicy.ValidateTarget(target)), "The optional Local Work policy accepted an unverified archive.");
+                    Check(Rejected(() => DesktopAppRelay.ResolveRelayTarget(app, cli, resolve)), "A recursive CLI target was accepted.");
+                    File.Delete(cli);
+                    Check(Rejected(() => DesktopAppRelay.ResolveRelayTarget(app, Path.Combine(root, "DesktopAppRelay.exe"), resolve)), "A package without its CLI was accepted.");
+                }
+                finally
+                {
+                    string full = Path.GetFullPath(root), temporary = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\') + "\\";
+                    Check(full.StartsWith(temporary, StringComparison.OrdinalIgnoreCase) && Path.GetFileName(full).StartsWith("CodexAccountSwitcher-relay-package-", StringComparison.Ordinal), "Unsafe fixture cleanup.");
+                    ManagedBridge.EnsureNoReparsePoint(full); if (Directory.Exists(full)) Directory.Delete(full, true);
+                }
+            });
             test("Desktop App relay distinguishes startup policy probes from persistent JSON-RPC", delegate
             {
                 Check(DesktopAppRelay.IsRpcServer(new[] { "app-server", "--analytics-default-enabled" }) &&
