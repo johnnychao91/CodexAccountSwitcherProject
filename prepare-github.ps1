@@ -18,7 +18,7 @@ $files = @(
     'AccountOrderTests.cs', 'AccountUiTests.cs', 'docs/runtime-control-validation.md',
     'AutoSwitchController.cs', 'AutoSwitchTests.cs', 'QuotaResetTests.cs', 'QuotaResetIntegrationTests.cs', 'ManagedRuntimeClient.cs', 'ManagedRuntimeClientTests.cs',
     'ManagedBridge.cs', 'ManagedBridgeProgram.cs', 'ManagedBridgeTests.cs',
-    'tests/FakeManagedBackend.cs', 'tests/CompanionTests.js', 'tests/Test-CleanClone.ps1',
+    'tests/FakeManagedBackend.cs', 'tests/CompanionTests.js', 'tests/Test-CleanClone.ps1', 'tests/Test-ContinuationProtocol.js',
     'DesktopNative.cs', 'DesktopNativeTests.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopLocalWorkPolicyTests.cs', 'DesktopWebSocket.cs', 'DesktopWebSocketTests.cs',
     'DesktopSession.cs', 'DesktopSessionTests.cs', 'DesktopHostProgram.cs', 'DesktopRuntimeCoordinator.cs', 'DesktopAutoStart.cs', 'DesktopAutoStartTests.cs',
     'desktop-start.ps1', 'tests/FakeDesktopApp.cs',

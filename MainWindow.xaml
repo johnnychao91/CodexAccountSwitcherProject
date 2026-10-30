@@ -31,7 +31,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="#E0EDE6" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="#A4BDB1" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="#365047" Margin="0,21,0,16"/>
-          <TextBlock Text="獨立工具 · v1.5.4&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
+          <TextBlock Text="獨立工具 · v1.5.5&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
         </StackPanel>
       </Grid>
     </Border>

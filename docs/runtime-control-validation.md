@@ -2,6 +2,14 @@
 
 驗證日期：2026-10-24～2026-10-27。此文件先說明 v1.5.1 的額度重置等待與 v1.5.0 的一次性桌面續聊，再保留各版桌面控制、VS Code 整合及早期研究原型紀錄。各項結果只適用於所列版本與範圍；原型成功不能代替正式原生 Host 的驗收，真實訂閱帳號的額度耗盡與完整自動切換仍未驗收。
 
+## v1.5.5：獨立的多版本續聊相容性設定
+
+26.1027.3384.0 的實際 ASAR 長度為 674296148，SHA256 為 `6FBEDF054A8D8CAFAF5C745B40AA59176512E106E0BD6308275AE123B60FD074`。靜態核對 IPC registry，owner discovery／interrupt／start turn 的版本仍為 1／4／2；沒有 top-level hostId 的本機呼叫使用此組版本。完整檔案指紋與既有 26.1021.3705.0 設定分開保存，套件路徑仍透過原生 MSIX 註冊驗證，檔案以同一 handle 檢查身分及計算雜湊。
+
+新增 `Test-ContinuationProtocol.js`，先核對實際套件指紋，再擷取原 registry 與 follower dispatcher。合成測試證明 `mode: system` 與 expectedTurnId 原樣傳給中止，開始回合保留 request 與 context 物件及回覆結構，原擁有者變更會拒絕，開始回合失敗不在 dispatcher 自動重送。抽取函式只在合成 owner 上執行，無 App IPC、程序啟動或真實訊息。
+
+此輪不做真實 App 驗收。既有 C# tests 保留 ACK 遺失、跨程序重啟不重送、設定與工具權限一致性及額度等待競態檢查。未知新版本仍須核對協定與設定處理後加入設定，不能只憑相同版本號放行。Local Work 封鎖與續聊功能的版本限制保持獨立。
+
 ## v1.5.3：代理啟動與可選功能的版本檢查
 
 26.1027.3384.0 套件升級後，發現 Relay.ValidateLaunch 無條件呼叫 Local Work 封鎖的固定 ASAR 雜湊檢查，早於啟動預檢轉送即會失敗。改為只解析並核對原套件後端與非遞迴目標；既有 Host／App／Relay 身分檢查不變。Host 在啟用 Local Work 封鎖時仍核對雜湊，DesktopConversationClient 的進階續聊版本檢查也維持。合成新版套件回歸涵蓋後端解析、遞迴拒絕、後端缺失拒絕及 Local Work 未驗證版本拒絕。未啟動真實 App；另一台的完整啟動仍需使用者更新後確認。

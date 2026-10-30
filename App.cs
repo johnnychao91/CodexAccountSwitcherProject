@@ -235,7 +235,7 @@ namespace CodexAccountSwitcher
         private async Task RefreshContinuationCompatibility()
         {
             bool supported = false;
-            try { supported = await Task.Run(delegate { DesktopLocalWorkPolicy.ValidateTarget(DesktopPackageTarget.Resolve(desktop)); return true; }); }
+            try { supported = await Task.Run(delegate { DesktopContinuationCompatibility.ValidateTarget(DesktopPackageTarget.Resolve(Installation.DesktopExe())); return true; }); }
             catch { }
             continuationCompatible = supported;
             UpdateContinuationButton();

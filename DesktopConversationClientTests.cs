@@ -29,6 +29,27 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("Continuation compatibility accepts both reviewed archive profiles while Local Work remains independently pinned", delegate
+            {
+                Func<string, byte[]> decode = hex => Enumerable.Range(0, hex.Length / 2).Select(i => Convert.ToByte(hex.Substring(i * 2, 2), 16)).ToArray();
+                var legacy = decode(DesktopContinuationCompatibility.LegacyArchiveSha256);
+                var updated = decode(DesktopContinuationCompatibility.UpdatedArchiveSha256);
+                DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.LegacyArchiveLength, legacy);
+                DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, updated);
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, updated)),
+                    "Continuation support silently enabled the unreviewed Local Work patch.");
+                Check(DesktopContinuationCompatibility.OwnerVersion == 1 && DesktopContinuationCompatibility.InterruptVersion == 4 &&
+                    DesktopContinuationCompatibility.StartVersion == 2, "The reviewed IPC versions changed.");
+            });
+            test("Continuation compatibility refuses altered same-size archives mismatched profiles and unknown versions", delegate
+            {
+                var digest = Enumerable.Range(0, 32).Select(i => Convert.ToByte(DesktopContinuationCompatibility.UpdatedArchiveSha256.Substring(i * 2, 2), 16)).ToArray();
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.LegacyArchiveLength, digest)), "A digest from another profile was accepted.");
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength + 1, digest)), "An unknown version was accepted.");
+                digest[0] ^= 1;
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, digest)), "A modified same-size archive was accepted.");
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, null)), "A missing digest was accepted.");
+            });
             test("Desktop conversation IPC frames use little-endian UTF8 lengths and tolerate partial reads", delegate
             {
                 using (var bytes = new MemoryStream())

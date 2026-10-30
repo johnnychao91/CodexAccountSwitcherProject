@@ -12,6 +12,30 @@ using System.Threading.Tasks;
 
 namespace CodexAccountSwitcher
 {
+    internal static class DesktopContinuationCompatibility
+    {
+        internal const long LegacyArchiveLength = 640129388;
+        internal const string LegacyArchiveSha256 = "04862A659C6A90FC50514D8C0B8016709D97DECE58839726C57495ED72F1D9F0";
+        internal const long UpdatedArchiveLength = 674296148;
+        internal const string UpdatedArchiveSha256 = "6FBEDF054A8D8CAFAF5C745B40AA59176512E106E0BD6308275AE123B60FD074";
+        internal const int OwnerVersion = 1, InterruptVersion = 4, StartVersion = 2;
+        private const string UnsupportedVersion = "目前 Codex 版本尚未通過自動續聊相容性驗證，已停止自動中止與續聊；請更新帳號切換器。";
+        internal static void ValidateTarget(DesktopPackageTarget target)
+        {
+            DesktopLocalWorkPolicy.ValidateArchive(target,
+                length => length == LegacyArchiveLength || length == UpdatedArchiveLength,
+                ValidateArchiveDigest, UnsupportedVersion);
+        }
+        internal static void ValidateArchiveDigest(long length, byte[] digest)
+        {
+            string expected = length == LegacyArchiveLength ? LegacyArchiveSha256 :
+                length == UpdatedArchiveLength ? UpdatedArchiveSha256 : null;
+            if (expected == null || digest == null || digest.Length != 32 ||
+                !String.Equals(BitConverter.ToString(digest).Replace("-", ""), expected, StringComparison.Ordinal))
+                throw new UserError(UnsupportedVersion);
+        }
+    }
+
     // The desktop thread manager owns these operations. This client
     // registers its own identity; it never adopts a renderer's existing client ID.
     public sealed class DesktopConversationClient : IDisposable
@@ -36,7 +60,7 @@ namespace CodexAccountSwitcher
                     // Package paths are immutable versioned installation paths.
                     // Recheck live process identity on every operation, but hash
                     // this exact installed package only once per connection.
-                    DesktopLocalWorkPolicy.ValidateTarget(DesktopPackageTarget.Resolve(state.App.ExecutablePath));
+                    DesktopContinuationCompatibility.ValidateTarget(DesktopPackageTarget.Resolve(state.App.ExecutablePath));
                     packageValidated = true;
                 }
             };
@@ -77,7 +101,7 @@ namespace CodexAccountSwitcher
             while (clock.Elapsed < TimeSpan.FromSeconds(30))
             {
                 cancellation.ThrowIfCancellationRequested(); Check(checkpoint);
-                var response = await transport.RequestAsync("thread-owner-discovery", 1,
+                var response = await transport.RequestAsync("thread-owner-discovery", DesktopContinuationCompatibility.OwnerVersion,
                     new Dictionary<string, object> { { "hostId", "local" }, { "conversationId", checkpoint.ThreadId } }, null, cancellation).ConfigureAwait(false);
                 string resultType = Json.Str(response, "resultType");
                 if (resultType == "success")
@@ -96,7 +120,7 @@ namespace CodexAccountSwitcher
             await OpenAsync(checkpoint, cancellation).ConfigureAwait(false);
             Check(checkpoint);
             if (Interlocked.CompareExchange(ref interruptAttempted, 1, 0) != 0) throw new UserError("此回合的中止要求已送出，請先確認原對話狀態。");
-            var response = await transport.RequestAsync("thread-follower-interrupt-turn", 4,
+            var response = await transport.RequestAsync("thread-follower-interrupt-turn", DesktopContinuationCompatibility.InterruptVersion,
                 new Dictionary<string, object> { { "hostId", "local" }, { "conversationId", checkpoint.ThreadId },
                     { "mode", "system" }, { "expectedTurnId", checkpoint.TurnId } }, owner, cancellation).ConfigureAwait(false);
             EnsureOwnerReply(response);
@@ -115,7 +139,7 @@ namespace CodexAccountSwitcher
             if (transport == null || String.IsNullOrEmpty(owner)) throw new UserError("原對話尚未完成連線，尚未送出續聊訊息。");
             if (Interlocked.CompareExchange(ref startAttempted, 1, 0) != 0) throw new UserError("此續聊要求已嘗試送出，已停止重送，請查看原對話。");
             var request = CreateTurnRequest(checkpoint, messageId);
-            var response = await transport.RequestAsync("thread-follower-start-turn", 2,
+            var response = await transport.RequestAsync("thread-follower-start-turn", DesktopContinuationCompatibility.StartVersion,
                 new Dictionary<string, object> { { "hostId", "local" }, { "conversationId", checkpoint.ThreadId },
                     { "turnStart", new { request = request, context = new { useAppServerPermissionDefault = false,
                         inheritThreadSettings = false, writingBlockContextPrepared = true } } } }, owner, cancellation).ConfigureAwait(false);

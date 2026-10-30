@@ -28,6 +28,11 @@ namespace CodexAccountSwitcher
         private static extern bool ReadArchiveInformation(SafeFileHandle file, out ArchiveInformation information);
 
         internal static void ValidateTarget(DesktopPackageTarget target)
+        { ValidateArchive(target, length => length == VerifiedArchiveLength, ValidateArchiveDigest, UnsupportedVersion); }
+
+        // Shared file identity reader only; each feature supplies its own policy.
+        internal static void ValidateArchive(DesktopPackageTarget target, Func<long, bool> acceptsLength,
+            Action<long, byte[]> validateDigest, string unsupportedVersion)
         {
             try
             {
@@ -50,9 +55,9 @@ namespace CodexAccountSwitcher
                         (information.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
                         throw new IOException("The Desktop archive is not a regular file.");
                     long length = ((long)information.SizeHigh << 32) | information.SizeLow;
-                    if (length != VerifiedArchiveLength) throw new UserError(UnsupportedVersion);
+                    if (!acceptsLength(length)) throw new UserError(unsupportedVersion);
                     using (var stream = new FileStream(file, FileAccess.Read))
-                    using (var sha256 = SHA256.Create()) ValidateArchiveDigest(length, sha256.ComputeHash(stream));
+                    using (var sha256 = SHA256.Create()) validateDigest(length, sha256.ComputeHash(stream));
                 }
             }
             catch (UserError) { throw; }
@@ -60,7 +65,7 @@ namespace CodexAccountSwitcher
             {
                 if (!(ex is IOException) && !(ex is UnauthorizedAccessException) && !(ex is ArgumentException) &&
                     !(ex is NotSupportedException) && !(ex is System.Security.SecurityException)) throw;
-                throw new UserError(UnsupportedVersion);
+                throw new UserError(unsupportedVersion);
             }
         }
 
