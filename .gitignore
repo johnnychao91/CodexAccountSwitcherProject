@@ -47,6 +47,8 @@ id_rsa
 id_ed25519
 
 # Private local exports, logs, caches, and backups
+/diagnostics/
+last-error.json
 .private/
 .local-private/
 private/

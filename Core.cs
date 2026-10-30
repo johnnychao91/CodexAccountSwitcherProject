@@ -27,6 +27,117 @@ namespace CodexAccountSwitcher
 
     public sealed class UserError : Exception { public UserError(string message) : base(message) { } }
 
+    internal sealed class OperationDiagnostic
+    {
+        public int Version { get; set; }
+        public string Utc { get; set; }
+        public string Operation { get; set; }
+        public string Category { get; set; }
+        public string HResult { get; set; }
+        public int? Win32Code { get; set; }
+        public string Reason { get; set; }
+        public string Origin { get; set; }
+        public string Code { get; set; }
+    }
+
+    internal static class OperationDiagnostics
+    {
+        private static readonly string[] Operations = { "ShowError", "Guard", "RunManual", "SetMonitoring", "InspectRuntimes",
+            "StartDesktopControlCore", "OpenCodexApp", "ShowDesktopControl", "RefreshUsage", "AddAccount", "Switch" };
+        private static readonly string[] SourceTypes = { "MainView", "Files", "Vault", "SwitchService", "LoginSession", "Installation",
+            "DesktopSessionFiles", "DesktopSessionClient", "ManagedBridge", "DesktopNative", "DesktopPackageTarget", "DesktopLauncher",
+            "DesktopLocalWorkPolicy", "DesktopConversationClient", "ContinuationTicketStore", "DesktopContinuationWorkflow", "RuntimeCoordinator" };
+        private static readonly Dictionary<string, string> Reasons = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "Desktop metadata could not be opened.", "metadata-open" },
+            { "Invalid desktop integration metadata.", "metadata-invalid" },
+            { "Desktop metadata owner changed.", "metadata-owner" },
+            { "Local data directory owner changed.", "metadata-owner" },
+            { "Integration directory owner changed.", "metadata-owner" },
+            { "Desktop metadata is not private to this Windows user.", "metadata-permissions" },
+            { "Integration directory is not private to this Windows user.", "metadata-permissions" },
+            { "A reparse point is not supported for integration files.", "metadata-reparse" },
+            { "Desktop configuration home changed.", "configuration-home" },
+            { "Desktop configuration fields missing.", "configuration-invalid" },
+            { "Desktop authorization fields missing.", "configuration-authorization" },
+            { "Desktop configuration is not a regular file.", "configuration-file" },
+            { "Desktop configuration directory changed.", "configuration-directory" },
+            { "Desktop control response was lost.", "control-response-lost" },
+            { "Desktop response identity changed.", "control-identity" },
+            { "Desktop state missing.", "control-state" },
+            { "Desktop snapshot fields missing.", "control-snapshot" }
+        };
+        internal static OperationDiagnostic Project(Exception error, string operation)
+        {
+            if (error == null) throw new ArgumentNullException("error");
+            string category = error is UnauthorizedAccessException ? "access" : error is IOException ? "io" :
+                error is System.ComponentModel.Win32Exception ? "win32" : error is UserError ? "user" : "other";
+            string hr = unchecked((uint)error.HResult).ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+            int? native = null; string reason = "unspecified"; int depth = 0;
+            for (Exception current = error; current != null; current = current.InnerException)
+            {
+                var win32 = current as System.ComponentModel.Win32Exception;
+                uint value = unchecked((uint)current.HResult);
+                int code = win32 != null ? win32.NativeErrorCode : (value & 0xFFFF0000U) == 0x80070000U ? (int)(value & 0xFFFFU) : -1;
+                if (!native.HasValue && code >= 0 && code <= 65535) native = code;
+                string known;
+                // Read messages only for exact constant matching; never copy any message into the record.
+                if (reason == "unspecified" && current is IOException && Reasons.TryGetValue(current.Message ?? "", out known)) reason = known;
+                if (++depth >= 8) break;
+            }
+            var result = new OperationDiagnostic { Version = 1, Utc = DateTimeOffset.UtcNow.ToString("o"),
+                Operation = Operations.Contains(operation) ? operation : "unknown", Category = category, HResult = hr,
+                Win32Code = native, Reason = reason, Origin = Source(error) };
+            result.Code = category.ToUpperInvariant() + "-" + hr + (native.HasValue ? "-" + native.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "") + "-" + reason;
+            return result;
+        }
+        private static string Source(Exception error)
+        {
+            try
+            {
+                var frames = new StackTrace(error, false).GetFrames();
+                foreach (var frame in frames ?? new StackFrame[0])
+                {
+                    var method = frame.GetMethod(); var type = method == null ? null : method.DeclaringType;
+                    if (type == null || type.Assembly != typeof(OperationDiagnostics).Assembly) continue;
+                    string member = method.Name;
+                    for (; type != null; type = type.DeclaringType)
+                    {
+                        if (type.Namespace != "CodexAccountSwitcher" || !SourceTypes.Contains(type.Name)) continue;
+                        return type.Name + "." + (Regex.IsMatch(member ?? "", "^[A-Za-z][A-Za-z0-9_]{0,63}$") ? member : "async");
+                    }
+                }
+            }
+            catch { }
+            return "unknown";
+        }
+        internal static string Describe(OperationDiagnostic diagnostic)
+        {
+            string message = diagnostic.Win32Code == 32 || diagnostic.Win32Code == 33 ? "檔案正被其他程序占用，請稍後重試。" :
+                diagnostic.Category == "access" || diagnostic.Win32Code == 5 ? "無法存取本機資料，請以原本的 Windows 使用者執行，並檢查資料夾權限。" :
+                diagnostic.Win32Code == 206 ? "資料路徑過長，請將專案放在較短的資料夾路徑後重試。" :
+                diagnostic.Win32Code == 112 ? "磁碟可用空間不足，請釋出空間後重試。" :
+                diagnostic.Reason == "metadata-owner" || diagnostic.Reason == "metadata-permissions" ? "桌面控制資料的擁有者或私人權限不符，已停止操作。請使用建立資料的 Windows 使用者。" :
+                diagnostic.Reason == "metadata-reparse" ? "桌面控制資料位置包含重新導向或連結，無法確認私人存取權限，已停止操作。" :
+                diagnostic.Reason == "configuration-home" ? "目前 Codex 資料位置與桌面控制設定不同，已停止操作。" :
+                diagnostic.Category == "io" ? "檔案或桌面控制連線未完成，請保留錯誤代碼以便檢查。" : "操作未完成，請保留錯誤代碼以便檢查。";
+            return message + "（代碼 " + diagnostic.Code + "）";
+        }
+        internal static bool TrySave(string storage, OperationDiagnostic diagnostic)
+        {
+            try
+            {
+                string text = Json.Encode(diagnostic);
+                if (Encoding.UTF8.GetByteCount(text) > 4096) return false;
+                string directory = Path.Combine(Path.GetFullPath(storage), "diagnostics");
+                Files.PrivateDirectory(directory);
+                Files.AtomicWrite(Path.Combine(directory, "last-error.json"), Encoding.UTF8.GetBytes(text));
+                return true;
+            }
+            catch { return false; }
+        }
+    }
+
     public sealed class Account
     {
         public string Id { get; set; }
@@ -80,12 +191,18 @@ namespace CodexAccountSwitcher
     {
         public static void PrivateDirectory(string path)
         {
-            Directory.CreateDirectory(path);
+            var current = WindowsIdentity.GetCurrent().User;
             var security = new DirectorySecurity();
             security.SetAccessRuleProtection(true, false);
+            security.SetOwner(current);
             var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-            security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
             security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            // Specify the user owner at creation: an elevated token may otherwise
+            // create an Administrators-owned directory despite its private DACL.
+            Directory.CreateDirectory(path, security);
+            if (!Directory.GetAccessControl(path).GetOwner(typeof(SecurityIdentifier)).Equals(current))
+                throw new IOException("Local data directory owner changed.");
             Directory.SetAccessControl(path, security);
         }
 
@@ -101,7 +218,13 @@ namespace CodexAccountSwitcher
             string temp = path + ".switch-" + Guid.NewGuid().ToString("N");
             try
             {
-                using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                var security = new FileSecurity();
+                var current = WindowsIdentity.GetCurrent().User;
+                security.SetAccessRuleProtection(true, false);
+                security.SetOwner(current);
+                security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, AccessControlType.Allow));
+                security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
+                using (var stream = new FileStream(temp, FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security))
                 { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
                 if (File.Exists(path)) File.Replace(temp, path, null);
                 else File.Move(temp, path);

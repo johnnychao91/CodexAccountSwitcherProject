@@ -25,6 +25,79 @@ namespace CodexAccountSwitcher
             Directory.CreateDirectory(root);
             var passed = new List<string>(); var failed = new List<string>();
             Action<string, Action> test = (name, action) => { try { action(); passed.Add(name); } catch (Exception ex) { failed.Add(name + ": " + ex.ToString()); } };
+            test("Operation diagnostics omit raw paths credentials messages exception data and unknown operation names", delegate
+            {
+                string sentinel = Path.Combine(root, "private-sentinel") + " fake-access-sentinel";
+                var error = new IOException(sentinel); error.Data["private"] = sentinel;
+                var diagnostic = OperationDiagnostics.Project(error, sentinel);
+                string json = Json.Encode(diagnostic), shown = OperationDiagnostics.Describe(diagnostic);
+                Check(!json.Contains(sentinel) && !shown.Contains(sentinel) && !json.Contains("fake-access-sentinel"));
+                Check(diagnostic.Operation == "unknown" && diagnostic.Origin == "unknown" && diagnostic.Reason == "unspecified");
+                Check(!shown.Contains("占用") && shown.Contains(diagnostic.Code));
+            });
+            test("Operation diagnostics preserve a nested native sharing code without copying native error text", delegate
+            {
+                var error = new IOException("outer-private-sentinel", new System.ComponentModel.Win32Exception(32, "native-private-sentinel"));
+                var diagnostic = OperationDiagnostics.Project(error, "OpenCodexApp");
+                Check(diagnostic.Win32Code == 32 && diagnostic.Operation == "OpenCodexApp");
+                Check(OperationDiagnostics.Describe(diagnostic).Contains("占用"));
+                string json = Json.Encode(diagnostic); Check(!json.Contains("outer-private-sentinel") && !json.Contains("native-private-sentinel"));
+            });
+            test("Operation diagnostics classify only exact known metadata reasons and distinguish access errors", delegate
+            {
+                var owner = OperationDiagnostics.Project(new IOException("Desktop metadata owner changed."), "StartDesktopControlCore");
+                var changed = OperationDiagnostics.Project(new IOException("Desktop metadata owner changed. private-sentinel"), "RunManual");
+                var denied = OperationDiagnostics.Project(new UnauthorizedAccessException("private-sentinel"), "InspectRuntimes");
+                Check(owner.Reason == "metadata-owner" && OperationDiagnostics.Describe(owner).Contains("擁有者"));
+                Check(changed.Reason == "unspecified" && !Json.Encode(changed).Contains("private-sentinel"));
+                Check(denied.Category == "access" && denied.Win32Code == 5 && OperationDiagnostics.Describe(denied).Contains("權限"));
+            });
+            test("Operation diagnostics save one bounded content-free private record and replace it safely", delegate
+            {
+                string diagnosticStorage = Path.Combine(root, "safe-diagnostics");
+                var diagnostic = OperationDiagnostics.Project(new IOException("private-sentinel"), "OpenCodexApp");
+                Check(OperationDiagnostics.TrySave(diagnosticStorage, diagnostic));
+                string file = Path.Combine(diagnosticStorage, "diagnostics", "last-error.json");
+                string saved = File.ReadAllText(file); Check(saved.Length < 4096 && !saved.Contains("private-sentinel"));
+                Check(Json.Object(saved).Count == 9 && Json.Str(Json.Object(saved), "Operation") == "OpenCodexApp");
+                Check(OperationDiagnostics.TrySave(diagnosticStorage, OperationDiagnostics.Project(new IOException("Desktop control response was lost."), "RunManual")));
+                Check(Directory.GetFiles(Path.GetDirectoryName(file)).Length == 1);
+            });
+            test("A diagnostics write failure never throws or removes the visible error code", delegate
+            {
+                string file = Path.Combine(root, "not-a-storage-directory"); File.WriteAllText(file, "fixture");
+                var diagnostic = OperationDiagnostics.Project(new IOException("private-sentinel"), "RunManual");
+                Check(!OperationDiagnostics.TrySave(file, diagnostic));
+                Check(OperationDiagnostics.Describe(diagnostic).Contains(diagnostic.Code) && File.ReadAllText(file) == "fixture");
+            });
+            test("Private data directory creation explicitly owns and protects data for the current Windows user", delegate
+            {
+                string directory = Path.Combine(root, "explicit-private-owner"); Files.PrivateDirectory(directory);
+                var user = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+                var security = Directory.GetAccessControl(directory);
+                Check(security.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)).Equals(user) && security.AreAccessRulesProtected);
+                foreach (System.Security.AccessControl.FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier)))
+                    Check(rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow || rule.IdentityReference.Equals(user) ||
+                        rule.IdentityReference.Equals(new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null)));
+                Files.PrivateDirectory(directory);
+                Check(Directory.GetAccessControl(directory).GetOwner(typeof(System.Security.Principal.SecurityIdentifier)).Equals(user));
+            });
+            test("Atomic writes explicitly own each new private file and retain ownership through replacement", delegate
+            {
+                string directory = Path.Combine(root, "explicit-file-owner"); Files.PrivateDirectory(directory);
+                string file = Path.Combine(directory, "private.json");
+                var user = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+                foreach (string value in new[] { "first-fixture", "replacement-fixture" })
+                {
+                    Files.AtomicWrite(file, Encoding.UTF8.GetBytes(value));
+                    var security = File.GetAccessControl(file);
+                    Check(security.GetOwner(typeof(System.Security.Principal.SecurityIdentifier)).Equals(user) && security.AreAccessRulesProtected);
+                    Check(File.ReadAllText(file) == value && Directory.GetFiles(directory).Length == 1);
+                    foreach (System.Security.AccessControl.FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier)))
+                        Check(rule.AccessControlType != System.Security.AccessControl.AccessControlType.Allow || rule.IdentityReference.Equals(user) ||
+                            rule.IdentityReference.Equals(new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null)));
+                }
+            });
             ProcessInspectorTests.Register(test);
             SwitchWorkflowTests.Register(test);
             UsageModelTests.Register(test);

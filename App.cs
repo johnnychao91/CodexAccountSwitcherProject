@@ -657,13 +657,18 @@ namespace CodexAccountSwitcher
             catch (Exception ex) { ShowError(ex); }
             UpdateButtons();
         }
-        private void ShowError(Exception ex)
+        private void ShowError(Exception ex, [System.Runtime.CompilerServices.CallerMemberName] string operation = null)
         {
             if (manualOperation) manualFailed = true;
-            string message = ex is UserError ? ex.Message :
-                ex is UnauthorizedAccessException ? "無法存取資料夾，請以原本的 Windows 使用者開啟本工具。" :
-                ex is IOException ? "檔案目前無法讀寫。請關閉占用檔案的程式後重試；尚未完成的操作不會覆寫帳號。" :
-                "操作未完成（" + ex.GetType().Name + "）。請重新開啟工具後重試。";
+            string message;
+            if (ex is UserError) message = ex.Message;
+            else
+            {
+                var diagnostic = OperationDiagnostics.Project(ex, operation);
+                bool saved = !demo && OperationDiagnostics.TrySave(storage, diagnostic);
+                message = OperationDiagnostics.Describe(diagnostic);
+                if (saved) message += @" 診斷已存於 %LOCALAPPDATA%\CodexAccountSwitcher\diagnostics\last-error.json。";
+            }
             Status(message);
         }
         private void UpdateButtons()

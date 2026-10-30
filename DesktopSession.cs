@@ -248,8 +248,16 @@ namespace CodexAccountSwitcher
                 // An explicit JSON null remains invalid when reading untrusted metadata.
                 var raw = ManagedBridge.Parse(encoded); raw.Remove("ControlRequested"); encoded = serializer.Serialize(raw);
             }
-            File.WriteAllText(temporary, encoded, new UTF8Encoding(false));
-            if (File.Exists(path)) { VerifyPrivate(path, true); File.Replace(temporary, path, null); } else File.Move(temporary, path);
+            if (File.Exists(path)) VerifyPrivate(path, true);
+            try
+            {
+                byte[] bytes = new UTF8Encoding(false).GetBytes(encoded);
+                using (var stream = ManagedBridge.CreatePrivateFile(temporary))
+                { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
+                VerifyPrivate(temporary, true);
+                if (File.Exists(path)) { VerifyPrivate(path, true); File.Replace(temporary, path, null); } else File.Move(temporary, path);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
         internal static bool IdentityEquals(DesktopProcessIdentity a, DesktopProcessIdentity b)
         { return a != null && b != null && a.Pid == b.Pid && a.StartedUtc == b.StartedUtc && String.Equals(a.ExecutablePath, b.ExecutablePath, StringComparison.OrdinalIgnoreCase) && a.SessionId == b.SessionId; }

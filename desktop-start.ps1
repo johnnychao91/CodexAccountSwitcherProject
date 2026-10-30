@@ -14,7 +14,9 @@ for ($parentDirectory = $specFile.Directory; $null -ne $parentDirectory; $parent
 $metadataOwner = (Get-Acl -LiteralPath $specPath).Owner
 $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if ((New-Object Security.Principal.NTAccount($metadataOwner)).Translate([Security.Principal.SecurityIdentifier]).Value -ne $currentIdentity.User.Value) { throw 'Desktop metadata owner changed.' }
-$specificationData = Get-Content -LiteralPath $specPath -Raw | ConvertFrom-Json
+# The native writer emits UTF-8 without a BOM. Windows PowerShell 5.1 otherwise
+# decodes using the computer's legacy code page, corrupting Unicode user paths.
+$specificationData = Get-Content -LiteralPath $specPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($specificationData.ProtocolVersion -ne 1 -or [IO.Path]::GetFileName($specPath) -ne 'launch.json') { throw 'Invalid desktop launch specification.' }
 $installedPackage = Get-AppxPackage -Name OpenAI.Codex | Where-Object { $_.PackageFullName -eq $specificationData.PackageFullName -and $_.PackageFamilyName -eq $specificationData.PackageFamilyName }
 if ($null -eq $installedPackage) { throw 'The installed Codex package changed.' }

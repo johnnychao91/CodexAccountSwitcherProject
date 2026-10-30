@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -109,6 +111,67 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("New integration directories and metadata belong to the current user and remain readable after replacement", delegate
+            {
+                string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-owner-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    ManagedBridge.PrivateDirectory(root);
+                    var current = WindowsIdentity.GetCurrent().User;
+                    Check(Directory.GetAccessControl(root).GetOwner(typeof(SecurityIdentifier)).Equals(current), "The new directory retained the token's default owner.");
+                    string path = Path.Combine(root, "metadata.json");
+                    DesktopSessionFiles.Write(path, new { sequence = 1 });
+                    Check(File.GetAccessControl(path).GetOwner(typeof(SecurityIdentifier)).Equals(current), "The new metadata retained the token's default owner.");
+                    Check(DesktopSessionFiles.Count(DesktopSessionFiles.Read<Dictionary<string, object>>(path), "sequence") == 1, "New private metadata could not be read.");
+                    DesktopSessionFiles.Write(path, new { sequence = 2 });
+                    Check(DesktopSessionFiles.Count(DesktopSessionFiles.Read<Dictionary<string, object>>(path), "sequence") == 2, "Replaced private metadata could not be read.");
+                    ManagedBridge.PrivateDirectory(root);
+                    Check(Directory.GetFiles(root).Length == 1, "Metadata replacement left temporary files.");
+                }
+                finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+            });
+            test("Existing broad integration directories are rejected without repairing their owner or ACL", delegate
+            {
+                string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-broad-owner-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    ManagedBridge.PrivateDirectory(root);
+                    var broad = Directory.GetAccessControl(root);
+                    broad.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.Read, AccessControlType.Allow));
+                    Directory.SetAccessControl(root, broad);
+                    string before = Directory.GetAccessControl(root).GetSecurityDescriptorSddlForm(AccessControlSections.All);
+                    bool rejected = false; try { ManagedBridge.PrivateDirectory(root); } catch (IOException) { rejected = true; }
+                    Check(rejected && before == Directory.GetAccessControl(root).GetSecurityDescriptorSddlForm(AccessControlSections.All), "An existing broad directory was silently repaired.");
+                }
+                finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+            });
+            test("Administrators ownership is not accepted as current-user ownership", delegate
+            {
+                var current = WindowsIdentity.GetCurrent().User;
+                var descriptor = new DirectorySecurity();
+                descriptor.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+                descriptor.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, AccessControlType.Allow));
+                bool rejected = false; try { ManagedBridge.VerifyPrivateDirectorySecurity(descriptor, current); } catch (IOException) { rejected = true; }
+                Check(rejected, "A group-owned existing directory was treated as current-user owned.");
+            });
+            test("Private file creation cannot replace an existing leaf and invalid metadata is unchanged", delegate
+            {
+                string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-private-leaf-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    ManagedBridge.PrivateDirectory(root); string path = Path.Combine(root, "metadata.json");
+                    DesktopSessionFiles.Write(path, new { original = true }); string original = File.ReadAllText(path);
+                    bool rejected = false; try { using (ManagedBridge.CreatePrivateFile(path)) { } } catch (IOException) { rejected = true; }
+                    Check(rejected && File.ReadAllText(path) == original, "CreateNew overwrote existing metadata.");
+                    var broad = File.GetAccessControl(path);
+                    broad.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.Read, AccessControlType.Allow));
+                    File.SetAccessControl(path, broad); string before = File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.All);
+                    rejected = false; try { DesktopSessionFiles.Write(path, new { changed = true }); } catch (IOException) { rejected = true; }
+                    Check(rejected && File.ReadAllText(path) == original && before == File.GetAccessControl(path).GetSecurityDescriptorSddlForm(AccessControlSections.All) && Directory.GetFiles(root).Length == 1,
+                        "Rejected metadata changed content, repaired its ACL, or left a temporary file.");
+                }
+                finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+            });
             string fake = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "FakeManagedBackend.exe");
             if (!File.Exists(fake)) return;
             RegisterContinuationTests(test, fake);

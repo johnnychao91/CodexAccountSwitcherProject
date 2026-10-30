@@ -136,12 +136,39 @@ namespace CodexAccountSwitcher
         public static void PrivateDirectory(string path)
         {
             EnsureNoReparsePoint(path);
-            Directory.CreateDirectory(path);
             var security = new DirectorySecurity();
+            var current = WindowsIdentity.GetCurrent().User;
+            security.SetOwner(current);
             security.SetAccessRuleProtection(true, false);
-            security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, FileSystemRights.FullControl,
+            security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl,
                 InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
-            Directory.SetAccessControl(path, security);
+            // Supply the owner and DACL when Windows creates the directory. An
+            // elevated token can otherwise default to Administrators as owner.
+            // This overload does not replace an existing directory's descriptor.
+            Directory.CreateDirectory(path, security);
+            EnsureNoReparsePoint(path);
+            VerifyPrivateDirectorySecurity(Directory.GetAccessControl(path), current);
+        }
+        internal static void VerifyPrivateDirectorySecurity(DirectorySecurity security, SecurityIdentifier current)
+        {
+            if (!security.GetOwner(typeof(SecurityIdentifier)).Equals(current))
+                throw new IOException("Integration directory owner changed.");
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                if (rule.AccessControlType == AccessControlType.Allow && !rule.IdentityReference.Equals(current) && !rule.IdentityReference.Equals(system))
+                    throw new IOException("Integration directory is not private to this Windows user.");
+        }
+        internal static FileStream CreatePrivateFile(string path)
+        {
+            EnsureNoReparsePoint(Path.GetDirectoryName(Path.GetFullPath(path)));
+            var current = WindowsIdentity.GetCurrent().User;
+            var security = new FileSecurity();
+            security.SetOwner(current);
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new FileSystemAccessRule(current, FileSystemRights.FullControl, AccessControlType.Allow));
+            // CreateNew prevents replacing or taking ownership of an existing leaf.
+            return new FileStream(path, FileMode.CreateNew, FileSystemRights.Read | FileSystemRights.Write,
+                FileShare.None, 4096, FileOptions.WriteThrough, security);
         }
         public static void EnsureNoReparsePoint(string path)
         {

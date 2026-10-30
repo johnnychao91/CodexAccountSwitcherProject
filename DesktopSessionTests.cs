@@ -1124,8 +1124,71 @@ namespace CodexAccountSwitcher
             }
             internal bool Close() { return Session.Quiesce(() => Connected); }
         }
+        private static int RunBootstrapMetadataPrefix(string prefix, string root, string metadata, Dictionary<string, string> fields, bool legacy)
+        {
+            string path = Path.Combine(root, legacy ? "legacy-prefix.ps1" : "utf8-prefix.ps1");
+            // Make the old implicit decoder deterministically non-Unicode, even on
+            // computers configured with UTF-8 as their system ANSI code page.
+            string source = prefix.Replace("$ErrorActionPreference = 'Stop'", "$ErrorActionPreference = 'Stop'\r\n$PSDefaultParameterValues['Get-Content:Encoding'] = 'ASCII'");
+            if (legacy) source = source.Replace(" -Encoding UTF8", "");
+            var checks = new StringBuilder(source);
+            foreach (var field in fields)
+                checks.AppendLine("if ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$specificationData." + field.Key + ")) -cne '" +
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes(field.Value)) + "') { exit 42 }");
+            checks.AppendLine("exit 0");
+            File.WriteAllText(path, checks.ToString(), new UTF8Encoding(true));
+            string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+            var start = new ProcessStartInfo(powershell, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + ManagedBridge.QuoteArgument(path) +
+                " -Specification " + ManagedBridge.QuoteArgument(metadata))
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+            using (var child = Process.Start(start))
+            {
+                var output = child.StandardOutput.ReadToEndAsync(); var error = child.StandardError.ReadToEndAsync();
+                Check(child.WaitForExit(20000), "The metadata-only PowerShell fixture did not exit within its bound.");
+                Task.WaitAll(new Task[] { output, error });
+                Check(child.ExitCode == 0 || child.ExitCode == 42, "The metadata prefix failed before its isolated Unicode assertions.");
+                return child.ExitCode;
+            }
+        }
+        private static void RegisterBootstrapEncodingTests(Action<string, Action> test)
+        {
+            test("Desktop bootstrap preserves UTF8 metadata under a legacy PowerShell text default without launching a package", delegate
+            {
+                string script = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "desktop-start.ps1");
+                string source = File.ReadAllText(script, Encoding.UTF8);
+                int boundary = source.IndexOf("$installedPackage =", StringComparison.Ordinal);
+                Check(boundary > 0, "The package activation boundary was not found.");
+                string prefix = source.Substring(0, boundary);
+                Check(!prefix.Contains("Invoke-CommandInDesktopPackage") && !prefix.Contains("Get-AppxPackage"), "The isolated prefix would operate a package.");
+                string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-encoding-" + Guid.NewGuid().ToString("N"));
+                DesktopSessionFiles.CreatePrivate(root);
+                try
+                {
+                    string marker = "fixture-\u6E2C\u8A66-\u03A9";
+                    var fields = new Dictionary<string, string> {
+                        { "HostExecutable", Path.Combine(root, marker, "DesktopRuntimeHost.exe") },
+                        { "Home", Path.Combine(root, marker, "home") },
+                        { "Directory", Path.Combine(root, marker, "session") },
+                        { "ConfigurationPath", Path.Combine(root, marker, "config.json") } };
+                    var value = fields.ToDictionary(item => item.Key, item => (object)item.Value);
+                    value.Add("ProtocolVersion", 1);
+                    string metadata = Path.Combine(root, "launch.json");
+                    DesktopSessionFiles.Write(metadata, value);
+                    Check(RunBootstrapMetadataPrefix(prefix, root, metadata, fields, true) == 42,
+                        "The old implicit decoding did not demonstrate Unicode corruption.");
+                    Check(RunBootstrapMetadataPrefix(prefix, root, metadata, fields, false) == 0,
+                        "The bootstrap did not preserve every Unicode metadata path.");
+                }
+                finally
+                {
+                    Check(Path.GetDirectoryName(Path.GetFullPath(root)).TrimEnd('\\') == Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\'), "Unexpected metadata cleanup target.");
+                    ManagedBridge.EnsureNoReparsePoint(root); Directory.Delete(root, true);
+                }
+            });
+        }
         public static void Register(Action<string, Action> test)
         {
+            RegisterBootstrapEncodingTests(test);
             RegisterContinuationRetirementTests(test);
             RegisterMemberGroupTests(test);
             RegisterSharedStatusTests(test);
