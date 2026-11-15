@@ -18,18 +18,30 @@ namespace CodexAccountSwitcher
         internal const string LegacyArchiveSha256 = "04862A659C6A90FC50514D8C0B8016709D97DECE58839726C57495ED72F1D9F0";
         internal const long UpdatedArchiveLength = 674296148;
         internal const string UpdatedArchiveSha256 = "6FBEDF054A8D8CAFAF5C745B40AA59176512E106E0BD6308275AE123B60FD074";
+        private const long November3ArchiveLength = 761033804;
+        private const string November3ArchiveSha256 = "EE88FDD77FB7346EFB5E91CE73C7C0EEE4EBA390FFBA3192635D5CDBE44E4097";
+        private const long November6ArchiveLength = 772825694;
+        private const string November6ArchiveSha256 = "54B74A9131680FC9EEAD711ED5D9F718F6127C22222CA60D2E3B577A707E2485";
+        internal const long CurrentArchiveLength = 783750654;
+        internal const string CurrentArchiveSha256 = "2551CBA1057A05CDC5CF5D75B146FAC4092BFF4CE77A10C43E3286C88D24C82D";
         internal const int OwnerVersion = 1, InterruptVersion = 4, StartVersion = 2;
         private const string UnsupportedVersion = "目前 Codex 版本尚未通過自動續聊相容性驗證，已停止自動中止與續聊；請更新帳號切換器。";
         internal static void ValidateTarget(DesktopPackageTarget target)
         {
-            DesktopLocalWorkPolicy.ValidateArchive(target,
-                length => length == LegacyArchiveLength || length == UpdatedArchiveLength,
-                ValidateArchiveDigest, UnsupportedVersion);
+            DesktopLocalWorkPolicy.ValidateArchive(target, ExpectedDigest, UnsupportedVersion);
+        }
+        private static string ExpectedDigest(long length)
+        {
+            if (length == LegacyArchiveLength) return LegacyArchiveSha256;
+            if (length == UpdatedArchiveLength) return UpdatedArchiveSha256;
+            if (length == November3ArchiveLength) return November3ArchiveSha256;
+            if (length == November6ArchiveLength) return November6ArchiveSha256;
+            if (length == CurrentArchiveLength) return CurrentArchiveSha256;
+            return null;
         }
         internal static void ValidateArchiveDigest(long length, byte[] digest)
         {
-            string expected = length == LegacyArchiveLength ? LegacyArchiveSha256 :
-                length == UpdatedArchiveLength ? UpdatedArchiveSha256 : null;
+            string expected = ExpectedDigest(length);
             if (expected == null || digest == null || digest.Length != 32 ||
                 !String.Equals(BitConverter.ToString(digest).Replace("-", ""), expected, StringComparison.Ordinal))
                 throw new UserError(UnsupportedVersion);

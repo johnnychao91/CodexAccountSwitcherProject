@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace CodexAccountSwitcher
 {
@@ -46,6 +47,17 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("Desktop archive fallback tolerates PNG replacement and rejects executable content changes", delegate
+            {
+                string before = ArchiveFingerprint(new byte[] { 1, 2 }, "original", 0);
+                string repacked = ArchiveFingerprint(new byte[] { 3, 4, 5 }, "original", 0);
+                Check(before == repacked, "Replacing an existing PNG changed the reviewed executable fingerprint.");
+                Check(before != ArchiveFingerprint(new byte[] { 1, 2 }, "modified", 0), "Modified JavaScript matched the reviewed archive.");
+                bool overlapRejected = false;
+                try { ArchiveFingerprint(new byte[] { 1, 2 }, "original", -1); }
+                catch (IOException) { overlapRejected = true; }
+                Check(overlapRejected, "An overlapping ASAR range was accepted.");
+            });
             test("Desktop Local Work opt-out is a complete no-op when disabled", delegate
             {
                 var start = new ProcessStartInfo { UseShellExecute = false };
@@ -112,8 +124,19 @@ namespace CodexAccountSwitcher
                 for (int i = 0; i < digest.Length; i++) digest[i] = Convert.ToByte(DesktopLocalWorkPolicy.UpdatedArchiveSha256.Substring(i * 2, 2), 16);
                 DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, digest);
                 Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.VerifiedArchiveLength, digest)), "A digest from another version was accepted.");
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.NovemberArchiveLength, digest)), "An older digest was accepted for the November archive.");
                 digest[0] ^= 1;
                 Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, digest)), "A changed current-version archive was accepted.");
+            });
+            test("November Codex Local Work compatibility requires its reviewed archive", delegate
+            {
+                var digest = new byte[32];
+                for (int i = 0; i < digest.Length; i++)
+                    digest[i] = Convert.ToByte(DesktopLocalWorkPolicy.NovemberArchiveSha256.Substring(i * 2, 2), 16);
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.NovemberArchiveLength, digest);
+                digest[31] ^= 1;
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.NovemberArchiveLength, digest)),
+                    "A changed November archive was accepted.");
             });
             test("Desktop Local Work opt-out refuses missing changed and non-file App archives before environment changes", delegate
             {
@@ -133,6 +156,39 @@ namespace CodexAccountSwitcher
                     Check(Rejected(() => DesktopLocalWorkPolicy.ValidateTarget(new DesktopPackageTarget { AppExecutable = "relative-app.exe" })), "A relative App target was accepted.");
                 }
             });
+        }
+
+        private static string ArchiveFingerprint(byte[] pixels, string script, int offsetDelta)
+        {
+            var signature = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 };
+            byte[] code = Encoding.UTF8.GetBytes(script);
+            int imageSize = signature.Length + pixels.Length;
+            var integrity = new { algorithm = "SHA256", hash = "fixture" };
+            var image = new Dictionary<string, object> { { "logo.png", new { size = imageSize, offset = "0", integrity = integrity } } };
+            var assets = new { files = new { assets = new { files = image } } };
+            var files = new Dictionary<string, object>
+            {
+                { "webview", assets },
+                { "main.js", new { size = code.Length, offset = (imageSize + offsetDelta).ToString(), integrity = integrity } }
+            };
+            byte[] header = Encoding.UTF8.GetBytes(Json.Encode(new { files = files }));
+            int padding = (4 - header.Length % 4) % 4;
+            int headerSize = 8 + header.Length + padding;
+            using (var archive = new MemoryStream())
+            using (var writer = new BinaryWriter(archive))
+            {
+                writer.Write(4);
+                writer.Write(headerSize);
+                writer.Write(headerSize - 4);
+                writer.Write(header.Length);
+                writer.Write(header);
+                writer.Write(new byte[padding]);
+                writer.Write(signature);
+                writer.Write(pixels);
+                writer.Write(code);
+                writer.Flush();
+                return DesktopArchiveCompatibility.Fingerprint(archive, null);
+            }
         }
     }
 }

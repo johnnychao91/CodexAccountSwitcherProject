@@ -34,9 +34,19 @@ namespace CodexAccountSwitcher
                 Func<string, byte[]> decode = hex => Enumerable.Range(0, hex.Length / 2).Select(i => Convert.ToByte(hex.Substring(i * 2, 2), 16)).ToArray();
                 var legacy = decode(DesktopContinuationCompatibility.LegacyArchiveSha256);
                 var updated = decode(DesktopContinuationCompatibility.UpdatedArchiveSha256);
+                var current = decode(DesktopContinuationCompatibility.CurrentArchiveSha256);
                 DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.LegacyArchiveLength, legacy);
                 DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, updated);
+                DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.CurrentArchiveLength, current);
                 DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength, updated);
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.CurrentArchiveLength, current);
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.CurrentArchiveLength, updated)),
+                    "An older digest was accepted for the current continuation profile.");
+                current[0] ^= 1;
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.CurrentArchiveLength, current)),
+                    "A modified current continuation archive was accepted.");
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.CurrentArchiveLength, current)),
+                    "A modified current Local Work archive was accepted.");
                 Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(DesktopLocalWorkPolicy.UpdatedArchiveLength + 1, updated)),
                     "An unknown Local Work version was accepted.");
                 Check(DesktopContinuationCompatibility.OwnerVersion == 1 && DesktopContinuationCompatibility.InterruptVersion == 4 &&

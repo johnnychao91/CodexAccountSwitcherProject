@@ -1,6 +1,6 @@
 # Codex 帳號切換器
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.6.0\CodexAccountSwitcher.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.6.7\CodexAccountSwitcher.exe`。
 
 ## 新電腦開始使用
 
@@ -9,6 +9,37 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
 需要自動切換與續聊時，開啟自動監看、桌面控制及桌面續聊。若 Codex 已在執行，先完成目前工作，再正常 Quit 一次，由切換器建立受管連線。桌面控制依賴 Codex 版本相容性；可選的 Local Work 封鎖另有版本檢查。
+
+## v1.6.7：部分 Windows Store 更新可沿用相容性驗證
+
+若新版只重新封裝相同內容，或只替換原有的介面 PNG 圖片，且桌面執行檔、隨附 CLI 與其餘套件內容相符，切換器可沿用 Codex 26.1111.2228.0 的自動續跑與 Local Work 封鎖驗證。執行檔或程式碼變動時，仍需另行驗證。
+
+## v1.6.6：支援 Codex 26.1111.2228.0
+
+此 Windows 套件已通過自動續跑與 Local Work 封鎖驗證。
+
+## v1.6.5：支援 Codex 26.1106.6628.0
+
+此 Windows 套件已通過自動續跑與 Local Work 封鎖驗證。
+
+## v1.6.4：自動監看在暫時查詢失敗後重試
+
+額度用完時，如果已連線的受管桌面暫時無法回報工作狀態，切換器會保留自動監看並在下次輪詢重新確認額度和桌面狀態。確認前會保留原對話與登入，已建立的額度等待也會保留。
+
+## v1.6.3：自動續跑支援 Codex 26.1103.7773.0
+
+已核對此 Windows 套件的原對話中止與續跑介面，並更新 Local Work 封鎖。開啟「自動監看並切換」及「自動續跑」，且桌面控制已連線時，功能會等到符合額度觸發條件再執行。套件指紋、原對話擁有者、權限與一次送出檢查仍有效。
+
+## v1.6.2：Local Work 封鎖支援 Codex 26.1103.4239.0
+
+即使對話已閒置，Local Work 仍可能留有獨立背景程序，使切換器等待。若沒有使用 Local Work，可在「桌面控制」勾選「受管桌面封鎖 Local Work」，正常退出 Codex 一次，再按切換器的「開啟 Codex App」。選項會在這次受管啟動生效。
+
+## v1.6.1：切換帳號時保留本機專案
+
+- 手動切換、自動切換和「切回上一個」會在 Codex 結束後，將已核對的本機專案補進目標帳號的側欄設定。沿用專案原有 ID，補上新增項目的排列與釘選，以及本機資料庫仍能確認的對話歸屬。目標帳號已有的設定優先。
+- 專案名稱、資料夾或 ID 有衝突，或無法確認本機專案時，切換會在套用登入資料前停止。側欄變更前會在 Codex 資料夾內保留一份私人備份。對話內容與專案資料庫維持唯讀。
+- 此流程適用於透過切換器切換的帳號。若某個帳號的專案側欄先前已變空，可先回到仍顯示專案的帳號，再用切換器切至目的帳號。
+- 每台電腦使用自己的 Codex 資料目錄，支援該電腦設定的 `CODEX_HOME`。取得專案原始碼後即可依一般方式建置，帳號與側欄資料在各台電腦上分開處理。
 
 ## v1.6.0：現版功能相容性更新
 
@@ -225,7 +256,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.6.0\codex-account-switcher-vscode.vsix`。
+1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.6.7\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Account Switcher: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。

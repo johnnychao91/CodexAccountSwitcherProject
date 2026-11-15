@@ -1209,6 +1209,26 @@ namespace CodexAccountSwitcher
                 state.Reason = "localWorkPolicyChanged";
                 Check(ManagedBridge.Encode(Program.CreateDesktopDiagnosticsReport(new[] { state }, null)).Contains("localWorkPolicyChanged"), "The managed Local Work restart reason was lost.");
             });
+            test("Only a transient read failure from a live authorized desktop defers continuation capture", delegate
+            {
+                var state = new DesktopSessionState { State = "running", ControlEnabled = true, TransportReady = true };
+                foreach (string reason in new[] { "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "initializing" })
+                {
+                    state.Reason = reason;
+                    Check(DesktopSessionClient.IsContinuationCaptureDeferred(state), "A recoverable read failed closed indefinitely.");
+                }
+                foreach (string reason in new[] { "localWorkPolicyChanged", "desktopTransportDisconnected", "unrecognizedBackendProtocol" })
+                {
+                    state.Reason = reason;
+                    Check(!DesktopSessionClient.IsContinuationCaptureDeferred(state), "An unsafe desktop state was treated as transient.");
+                }
+                state.Reason = "runtimeQueryUnavailable"; state.ControlEnabled = false;
+                Check(!DesktopSessionClient.IsContinuationCaptureDeferred(state), "A revoked session deferred capture.");
+                state.ControlEnabled = true; state.TransportReady = false;
+                Check(!DesktopSessionClient.IsContinuationCaptureDeferred(state), "A disconnected session deferred capture.");
+                state.TransportReady = true; state.BackendExitCode = 1;
+                Check(!DesktopSessionClient.IsContinuationCaptureDeferred(state), "An exited backend deferred capture.");
+            });
             test("Desktop transport startup readiness does not authorize an unknown runtime shutdown", delegate
             {
                 string id = Guid.NewGuid().ToString("N");

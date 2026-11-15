@@ -15,6 +15,14 @@ namespace CodexAccountSwitcher
         internal const string VerifiedArchiveSha256 = "04862A659C6A90FC50514D8C0B8016709D97DECE58839726C57495ED72F1D9F0";
         internal const long UpdatedArchiveLength = 674296148;
         internal const string UpdatedArchiveSha256 = "6FBEDF054A8D8CAFAF5C745B40AA59176512E106E0BD6308275AE123B60FD074";
+        internal const long NovemberArchiveLength = 761023153;
+        internal const string NovemberArchiveSha256 = "FB47D6491DC3006B708CB1E14DE479B882BF50F88B7DAA81818F154C253266AA";
+        private const long November3ArchiveLength = 761033804;
+        private const string November3ArchiveSha256 = "EE88FDD77FB7346EFB5E91CE73C7C0EEE4EBA390FFBA3192635D5CDBE44E4097";
+        private const long November6ArchiveLength = 772825694;
+        private const string November6ArchiveSha256 = "54B74A9131680FC9EEAD711ED5D9F718F6127C22222CA60D2E3B577A707E2485";
+        internal const long CurrentArchiveLength = 783750654;
+        internal const string CurrentArchiveSha256 = "2551CBA1057A05CDC5CF5D75B146FAC4092BFF4CE77A10C43E3286C88D24C82D";
         private const string UnsupportedVersion = "目前 Codex 桌面版本尚未通過 Local Work 封鎖相容性驗證。請先關閉 Local Work 封鎖選項，或更新切換器後再啟動受管桌面。";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -30,11 +38,21 @@ namespace CodexAccountSwitcher
         private static extern bool ReadArchiveInformation(SafeFileHandle file, out ArchiveInformation information);
 
         internal static void ValidateTarget(DesktopPackageTarget target)
-        { ValidateArchive(target, length => length == VerifiedArchiveLength || length == UpdatedArchiveLength, ValidateArchiveDigest, UnsupportedVersion); }
+        { ValidateArchive(target, ExpectedDigest, UnsupportedVersion); }
+
+        private static string ExpectedDigest(long length)
+        {
+            if (length == VerifiedArchiveLength) return VerifiedArchiveSha256;
+            if (length == UpdatedArchiveLength) return UpdatedArchiveSha256;
+            if (length == NovemberArchiveLength) return NovemberArchiveSha256;
+            if (length == November3ArchiveLength) return November3ArchiveSha256;
+            if (length == November6ArchiveLength) return November6ArchiveSha256;
+            if (length == CurrentArchiveLength) return CurrentArchiveSha256;
+            return null;
+        }
 
         // Shared file identity reader only; each feature supplies its own policy.
-        internal static void ValidateArchive(DesktopPackageTarget target, Func<long, bool> acceptsLength,
-            Action<long, byte[]> validateDigest, string unsupportedVersion)
+        internal static void ValidateArchive(DesktopPackageTarget target, Func<long, string> expectedDigest, string unsupportedVersion)
         {
             try
             {
@@ -57,23 +75,32 @@ namespace CodexAccountSwitcher
                         (information.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
                         throw new IOException("The Desktop archive is not a regular file.");
                     long length = ((long)information.SizeHigh << 32) | information.SizeLow;
-                    if (!acceptsLength(length)) throw new UserError(unsupportedVersion);
                     using (var stream = new FileStream(file, FileAccess.Read))
-                    using (var sha256 = SHA256.Create()) validateDigest(length, sha256.ComputeHash(stream));
+                    {
+                        string expected = expectedDigest(length);
+                        if (expected != null)
+                        {
+                            using (var sha = SHA256.Create())
+                                if (BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "") == expected) return;
+                        }
+                        if (!DesktopArchiveCompatibility.Matches(stream, archive, target))
+                            throw new UserError(unsupportedVersion);
+                    }
                 }
             }
             catch (UserError) { throw; }
             catch (Exception ex)
             {
                 if (!(ex is IOException) && !(ex is UnauthorizedAccessException) && !(ex is ArgumentException) &&
-                    !(ex is NotSupportedException) && !(ex is System.Security.SecurityException)) throw;
+                    !(ex is NotSupportedException) && !(ex is InvalidOperationException) &&
+                    !(ex is System.Security.SecurityException)) throw;
                 throw new UserError(unsupportedVersion);
             }
         }
 
         internal static void ValidateArchiveDigest(long length, byte[] digest)
         {
-            string expected = length == VerifiedArchiveLength ? VerifiedArchiveSha256 : length == UpdatedArchiveLength ? UpdatedArchiveSha256 : null;
+            string expected = ExpectedDigest(length);
             if (expected == null || digest == null || digest.Length != 32 ||
                 !String.Equals(BitConverter.ToString(digest).Replace("-", ""), expected, StringComparison.Ordinal))
                 throw new UserError(UnsupportedVersion);
@@ -106,7 +133,7 @@ namespace CodexAccountSwitcher
                 throw new UserError("無法驗證受管桌面的私人工作目錄，Local Work 封鎖尚未套用。");
             }
             // Experimental availability block, not a native App on/off preference.
-            // In both reviewed Apps, executor resolution rejects a directory as a non-retryable error
+            // In the reviewed Apps, executor resolution rejects a directory as a non-retryable error
             // before cloud registration or exec-server spawn. ENABLED=0 alone is
             // insufficient: the renderer can subsequently authorize the feature.
             // Set only the executor-specific override; keep the local CLI/backend intact.

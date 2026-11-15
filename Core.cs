@@ -166,11 +166,7 @@ namespace CodexAccountSwitcher
                 string idToken = Json.Str(tokens, "id_token");
                 if (String.IsNullOrWhiteSpace(Json.Str(tokens, "access_token")) ||
                     String.IsNullOrWhiteSpace(Json.Str(tokens, "refresh_token"))) throw new Exception();
-                var parts = idToken.Split('.');
-                if (parts.Length != 3) throw new Exception();
-                string payload = parts[1].Replace('-', '+').Replace('_', '/');
-                payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
-                var claims = Json.Object(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
+                var claims = ReadIdentityClaims(idToken);
                 var authClaims = Json.Map(claims, "https://api.openai.com/auth");
                 string subject = Json.Str(claims, "sub");
                 string workspace = Json.Str(tokens, "account_id");
@@ -184,6 +180,15 @@ namespace CodexAccountSwitcher
                     Auth = raw, SavedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") };
             }
             catch { throw new UserError("登入資料格式不支援或不完整。請使用「新增帳號」重新登入 ChatGPT。"); }
+        }
+
+        internal static Dictionary<string, object> ReadIdentityClaims(string token)
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3) throw new FormatException();
+            string payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
+            return Json.Object(Encoding.UTF8.GetString(Convert.FromBase64String(payload)));
         }
     }
 
@@ -213,7 +218,7 @@ namespace CodexAccountSwitcher
             return File.ReadAllText(path, Encoding.UTF8);
         }
 
-        public static void AtomicWrite(string path, byte[] bytes)
+        public static void AtomicWrite(string path, byte[] bytes, Action beforeReplace = null)
         {
             string temp = path + ".switch-" + Guid.NewGuid().ToString("N");
             try
@@ -226,6 +231,7 @@ namespace CodexAccountSwitcher
                 security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, AccessControlType.Allow));
                 using (var stream = new FileStream(temp, FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, security))
                 { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
+                if (beforeReplace != null) beforeReplace();
                 if (File.Exists(path)) File.Replace(temp, path, null);
                 else File.Move(temp, path);
             }
@@ -399,6 +405,12 @@ namespace CodexAccountSwitcher
                 vault.Upsert(old, null); vault.Save(); return;
             }
             if (!Directory.Exists(home)) throw new UserError("找不到 Codex 資料夾，請先啟動 Codex 並登入。");
+            var sidebar = ProjectSidebar.Prepare(home, old, targetRaw);
+            Action confirmQuiet = delegate
+            {
+                if (busy() || Files.ReadAuth(path) != old)
+                    throw new UserError("登入狀態剛剛改變，已取消切換。請完全結束 Codex 後重試。");
+            };
             if (old != null)
             {
                 // Keep a newly logged-in session when replacing the same user's old session.
@@ -408,9 +420,8 @@ namespace CodexAccountSwitcher
             }
             vault.Data.PreviousAuth = old;
             vault.Save(); // If the backup cannot be saved, do not touch active credentials.
-            if (busy() || Files.ReadAuth(path) != old)
-                throw new UserError("登入狀態剛剛改變，已取消切換。請完全結束 Codex 後重試。");
-            Files.AtomicWrite(path, Encoding.UTF8.GetBytes(targetRaw));
+            if (sidebar != null) sidebar.Commit(confirmQuiet);
+            Files.AtomicWrite(path, Encoding.UTF8.GetBytes(targetRaw), confirmQuiet);
             string confirmed;
             try { confirmed = Files.ReadAuth(path); }
             catch (IOException) { throw new UserError("登入快取已寫入，但無法讀回確認，尚未自動開啟 Codex。請重新整理檢查，或使用「切回上一個」復原。"); }

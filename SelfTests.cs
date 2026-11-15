@@ -13,7 +13,7 @@ namespace CodexAccountSwitcher
         public static string Auth(string user, string workspace, string email, string plan, string refresh)
         {
             var claims = new Dictionary<string, object> { { "sub", user }, { "email", email },
-                { "https://api.openai.com/auth", new Dictionary<string, object> { { "chatgpt_plan_type", plan } } } };
+                { "https://api.openai.com/auth", new Dictionary<string, object> { { "chatgpt_plan_type", plan }, { "chatgpt_user_id", user } } } };
             string payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(Json.Encode(claims))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
             return Json.Encode(new { auth_mode = "chatgpt", tokens = new { id_token = "test." + payload + ".signature", access_token = "fake-access", refresh_token = refresh, account_id = workspace }, last_refresh = "2000-01-01T00:00:00Z" });
         }
@@ -100,6 +100,7 @@ namespace CodexAccountSwitcher
             });
             ProcessInspectorTests.Register(test);
             SwitchWorkflowTests.Register(test);
+            ProjectSidebarTests.Register(test, root);
             UsageModelTests.Register(test);
             UsageSessionTests.Register(test);
             AccountOrderTests.Register(test);

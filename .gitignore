@@ -22,6 +22,8 @@ test-data-*/
 # These also protect against accidentally copying local data here.
 .codex/
 .codex-home/
+.codex-global-state.json*
+.codex-switcher-sidebar-backup/
 CodexAccountSwitcher/
 login-*/
 usage-*/

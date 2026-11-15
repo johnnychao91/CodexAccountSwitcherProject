@@ -125,10 +125,23 @@ namespace CodexAccountSwitcher
             try { outcome = await RunAttemptAsync(attempt, source.Token); }
             catch (OperationCanceledException)
             { lock (gate) enabled = false; outcome = "自動切換已取消。"; }
-            catch (Exception)
-            { lock (gate) enabled = false; faulted = true; outcome = attempt.Committed && attempt.LaunchCompleted ?
-                "Codex 已重開，但自動續聊尚未確認；已停止自動送出，請檢查原對話。" :
-                "自動切換未完成，已停用。請確認登入與相關程式後手動重新啟用。"; }
+            catch (Exception error)
+            {
+                if (error is ContinuationCaptureDeferred && !attempt.WaitStarted)
+                {
+                    // Capture has no side effects. In particular, preserve an unclaimed quota wait.
+                    attempt.ContinuationStarted = false;
+                    outcome = error.Message;
+                }
+                else
+                {
+                    lock (gate) enabled = false;
+                    faulted = true;
+                    outcome = attempt.Committed && attempt.LaunchCompleted ?
+                        "Codex 已重開，但自動續聊尚未確認；已停止自動送出，請檢查原對話。" :
+                        "自動切換未完成，已停用。請確認登入與相關程式後手動重新啟用。";
+                }
+            }
             // Keep asynchronous recovery after the handled operation rather than in a finally
             // block: the bundled .NET Framework compiler supports C# 5.
             try

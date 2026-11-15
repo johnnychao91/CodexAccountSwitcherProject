@@ -154,6 +154,38 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            foreach (bool preserveQuotaWait in new[] { false, true })
+            {
+                bool existingWait = preserveQuotaWait;
+                test(existingWait ? "Transient capture preserves a durable quota wait" : "Transient capture retries quota handoff without disabling monitoring", delegate { Run(async delegate
+                {
+                    using (var f = new Fixture())
+                    {
+                        if (existingWait) await f.EstablishWait(); else f.Controller.Enable();
+                        var previous = f.Store.ReadPending().SingleOrDefault();
+                        var capture = f.Operations.Capture;
+                        bool available = false;
+                        f.Operations.Capture = token =>
+                        {
+                            if (!available) throw new ContinuationCaptureDeferred();
+                            return capture(token);
+                        };
+                        f.Remaining["higher"] = 70;
+                        await Finish(f.Controller.TickAsync());
+                        var pending = f.Store.ReadPending().SingleOrDefault();
+                        Check(f.Controller.Enabled && f.Controller.StatusMessage.Contains("重新檢查") &&
+                            (existingWait ? pending != null && pending.OperationId == previous.OperationId &&
+                                pending.State == ContinuationTicketState.WaitingForQuota : pending == null) &&
+                            f.Binds == 0 && f.Waits == 0 && f.Applies == 0 && f.Launches == 0 && f.Starts == 0,
+                            "Deferred capture changed the desktop, account or quota wait.");
+                        available = true;
+                        await Finish(f.Controller.TickAsync());
+                        await Finish(f.Controller.TickAsync());
+                        Check(f.Controller.Enabled && f.Applies == 1 && f.Launches == 1 && f.Starts == 1 && f.Interrupts == 0,
+                            "A recovered read-only capture did not switch and resume exactly once.");
+                    }
+                }); });
+            }
             foreach (bool sameAccount in new[] { false, true })
             {
                 bool retain = sameAccount;

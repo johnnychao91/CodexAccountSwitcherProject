@@ -116,6 +116,7 @@ namespace CodexAccountSwitcher
                 ticket = store.Create(source.Id, target.Id, checkpoint);
             }
             catch (OperationCanceledException) { SetStatus("桌面自動續聊已取消，尚未送出訊息。"); throw; }
+            catch (ContinuationCaptureDeferred error) { SetStatus(error.Message); throw; }
             catch (UserError error) { SetStatus(error.Message); throw; }
             catch { SetStatus("無法確認原對話或完整保留其設定，已停止自動續聊；尚未送出訊息。"); throw; }
             try

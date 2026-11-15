@@ -18,6 +18,12 @@ using Microsoft.Win32.SafeHandles;
 
 namespace CodexAccountSwitcher
 {
+    // Raised only by read-only capture, before a continuation is bound or a turn is interrupted.
+    internal sealed class ContinuationCaptureDeferred : Exception
+    {
+        internal ContinuationCaptureDeferred() : base("受管桌面工作狀態暫時無法確認，將在下次自動監看時重新檢查。") { }
+    }
+
     public sealed class DesktopSessionState
     {
         public int ProtocolVersion { get; set; }
@@ -718,6 +724,7 @@ namespace CodexAccountSwitcher
                 if (!ControlRequested || !Enabled) throw new UserError("桌面自動控制已停用，已停止擷取續聊。");
                 var states = await InspectAsync(cancellation).ConfigureAwait(false);
                 if (states.Count == 0) return null;
+                if (states.Count == 1 && IsContinuationCaptureDeferred(states[0])) throw new ContinuationCaptureDeferred();
                 if (states.Count != 1 || !states[0].Known || !states[0].ControlEnabled || !states[0].TransportReady || states[0].State != "running")
                     throw new UserError("無法確認單一受管桌面，已停止自動中止與續聊。");
                 object raw = null; Exception captureFailure = null;
@@ -726,8 +733,12 @@ namespace CodexAccountSwitcher
                 cancellation.ThrowIfCancellationRequested();
                 if (captureFailure != null)
                 {
-                    var fresh = (await InspectAsync(cancellation).ConfigureAwait(false)).SingleOrDefault(item => item.SessionId == states[0].SessionId);
-                    if (fresh == null || !DesktopSessionFiles.IdentityEquals(fresh.Host, states[0].Host) || fresh.Generation <= states[0].Generation) throw captureFailure;
+                    var refreshed = await InspectAsync(cancellation).ConfigureAwait(false);
+                    if (refreshed.Count != 1) throw captureFailure;
+                    var fresh = refreshed[0];
+                    if (fresh.SessionId != states[0].SessionId || !DesktopSessionFiles.IdentityEquals(fresh.Host, states[0].Host)) throw captureFailure;
+                    if (IsContinuationCaptureDeferred(fresh)) throw new ContinuationCaptureDeferred();
+                    if (fresh.Generation <= states[0].Generation) throw captureFailure;
                     await Task.Delay(300, cancellation).ConfigureAwait(false); continue;
                 }
                 if (raw == null) return null;
@@ -739,7 +750,13 @@ namespace CodexAccountSwitcher
                     throw new UserError("擷取續聊時桌面連線已變更，已停止自動中止。");
                 return checkpoint;
             }
-            throw new UserError("其他桌面連線仍有尚未結束的唯讀查詢，已停止擷取續聊；尚未中止或送出訊息。");
+            throw new ContinuationCaptureDeferred();
+        }
+        internal static bool IsContinuationCaptureDeferred(DesktopSessionState state)
+        {
+            return state.State == "running" && state.ControlEnabled && state.TransportReady && !state.Known &&
+                !state.BackendExitCode.HasValue && (state.Reason == "runtimeQueryUnavailable" ||
+                    state.Reason == "runtimeChangedDuringQuery" || state.Reason == "initializing");
         }
         public void BindContinuationRestore(DesktopContinuationCheckpoint checkpoint, string operationId)
         {

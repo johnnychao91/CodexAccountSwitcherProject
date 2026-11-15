@@ -3,7 +3,7 @@ $projectRoot = $PSScriptRoot
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework = Split-Path $compiler
 $wpf = Join-Path $framework 'WPF'
-$release = Join-Path $projectRoot 'dist-v1.6.0'
+$release = Join-Path $projectRoot 'dist-v1.6.7'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
@@ -12,9 +12,10 @@ $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program',
     "/reference:$(Join-Path $wpf 'PresentationFramework.dll')", "/reference:$(Join-Path $wpf 'PresentationCore.dll')", "/reference:$(Join-Path $wpf 'WindowsBase.dll')", '/reference:System.Xaml.dll',
     (Join-Path $projectRoot 'Core.cs'), (Join-Path $projectRoot 'DesktopLauncher.cs'), (Join-Path $projectRoot 'ProcessInspector.cs'), (Join-Path $projectRoot 'SwitchWorkflow.cs'), (Join-Path $projectRoot 'App.cs'), (Join-Path $projectRoot 'SelfTests.cs'), (Join-Path $projectRoot 'AccountOrderTests.cs'), (Join-Path $projectRoot 'AccountUiTests.cs'), (Join-Path $projectRoot 'ProcessInspectorTests.cs'), (Join-Path $projectRoot 'SwitchWorkflowTests.cs'), (Join-Path $projectRoot 'UsageModels.cs'), (Join-Path $projectRoot 'UsageModelTests.cs'), (Join-Path $projectRoot 'UsageSession.cs'), (Join-Path $projectRoot 'UsageSessionTests.cs'), (Join-Path $projectRoot 'AutoSwitchController.cs'), (Join-Path $projectRoot 'AutoSwitchTests.cs'), (Join-Path $projectRoot 'ManagedRuntimeClient.cs'), (Join-Path $projectRoot 'ManagedRuntimeClientTests.cs'))
 $argsList += @((Join-Path $projectRoot 'ManagedBridge.cs'), (Join-Path $projectRoot 'ManagedBridgeTests.cs'))
+$argsList += (Join-Path $projectRoot 'ProjectSidebarTests.cs')
 $argsList += (Join-Path $projectRoot 'QuotaResetTests.cs')
 $argsList += (Join-Path $projectRoot 'QuotaResetIntegrationTests.cs')
-$desktopSources = @('DesktopNative.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopWebSocket.cs', 'DesktopSession.cs', 'DesktopHostProgram.cs', 'ContinuationTicket.cs', 'ContinuationAdmission.cs', 'DesktopAppRelay.cs') | ForEach-Object { Join-Path $projectRoot $_ }
+$desktopSources = @('DesktopNative.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopArchiveCompatibility.cs', 'DesktopWebSocket.cs', 'DesktopSession.cs', 'DesktopHostProgram.cs', 'ContinuationTicket.cs', 'ContinuationAdmission.cs', 'DesktopAppRelay.cs', 'ProjectSidebar.cs') | ForEach-Object { Join-Path $projectRoot $_ }
 $argsList += $desktopSources
 $argsList += @('DesktopNativeTests.cs', 'DesktopLocalWorkPolicyTests.cs', 'DesktopWebSocketTests.cs', 'DesktopSessionTests.cs', 'DesktopRuntimeCoordinator.cs', 'DesktopAutoStart.cs', 'DesktopAutoStartTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
 $argsList += @('ContinuationTicketTests.cs', 'ContinuationAdmissionTests.cs', 'DesktopConversationClient.cs', 'DesktopConversationClientTests.cs', 'DesktopContinuationWorkflow.cs', 'DesktopContinuationWorkflowTests.cs', 'DesktopAppRelayTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
