@@ -12,6 +12,74 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("Bulk stop targets Codex executables and leaves unrelated child work alone", delegate
+            {
+                var snapshots = new[] { Snapshot(1, "codex.exe"), Snapshot(2, "DesktopRuntimeHost.exe"),
+                    Snapshot(3, "DesktopAppRelay.exe"), Snapshot(4, "ManagedBridge.exe"), Snapshot(5, "ChatGPT.exe"),
+                    Snapshot(6, "Code.exe"), Snapshot(7, "CodexAccountSwitcher.exe"), Snapshot(8, "codex.exe", session: 2),
+                    Snapshot(9, "codex.exe"), Snapshot(10, "codex.exe"), Snapshot(11, "codex.exe"), Snapshot(12, "conhost.exe"),
+                    Snapshot(13, "node.exe"), Snapshot(14, "pwsh.exe"), Snapshot(15, "codex-windows-sandbox-setup.exe") };
+                snapshots[5].ParentPid = 1;
+                snapshots[11].ParentPid = 1;
+                snapshots[12].ParentPid = 1;
+                snapshots[13].ParentPid = 13;
+                snapshots[14].ParentPid = 1;
+                var selected = ProcessInspector.FindCodexStopTargets(snapshots, 1, 9, pid =>
+                {
+                    if (pid == 11) return null;
+                    var item = snapshots.Single(process => process.Pid == pid);
+                    return new DesktopProcessIdentity { Pid = pid, ParentPid = item.ParentPid, SessionId = item.SessionId,
+                        ExecutablePath = System.IO.Path.Combine("fixture", pid == 10 ? "renamed.exe" : item.Name) };
+                });
+                Check(selected.Select(item => item.Pid).SequenceEqual(new[] { 1, 2, 3, 4 }));
+            });
+            test("Bulk stop lets Codex desktop exit and retire its relay before stopping an old backend", delegate
+            {
+                var app = new DesktopProcessIdentity { Pid = 20, ExecutablePath = "ChatGPT.exe" };
+                var relay = new DesktopProcessIdentity { Pid = 21, ExecutablePath = "DesktopAppRelay.exe" };
+                var backend = new DesktopProcessIdentity { Pid = 22, ExecutablePath = "codex.exe" };
+                var host = new DesktopProcessIdentity { Pid = 23, ExecutablePath = "DesktopRuntimeHost.exe" };
+                var exited = new HashSet<int>();
+                var actions = new List<string>();
+                var remaining = ProcessInspector.StopCodexTargets(new[] { host, backend, relay, app }, actor => actor == app,
+                    actor => actor == app, actor => { actions.Add("close"); exited.Add(actor.Pid); return true; },
+                    actor => exited.Contains(actor.Pid),
+                    actors =>
+                    {
+                        actions.Add("wait");
+                        if (actors.Contains(relay)) exited.Add(relay.Pid);
+                        if (exited.Contains(backend.Pid)) exited.Add(host.Pid);
+                    }, () => false,
+                    actor => { actions.Add("force " + actor.Pid); exited.Add(actor.Pid); });
+                Check(remaining.Count == 0 && actions.SequenceEqual(new[] { "close", "wait", "wait", "force 22", "wait" }));
+            });
+            test("Bulk stop protects desktop dependencies when the App refuses to exit or has no window", delegate
+            {
+                var app = new DesktopProcessIdentity { Pid = 20, ExecutablePath = "ChatGPT.exe" };
+                var backend = new DesktopProcessIdentity { Pid = 22, ExecutablePath = "codex.exe" };
+                foreach (bool hasWindow in new[] { true, false })
+                {
+                    int forced = 0;
+                    var remaining = ProcessInspector.StopCodexTargets(new[] { app, backend }, actor => actor == app,
+                        actor => hasWindow, actor => false, actor => false, actors => { }, () => false, actor => forced++);
+                    Check(remaining.Count == 2 && forced == 0);
+                }
+                int forceNewDesktop = 0;
+                var pending = ProcessInspector.StopCodexTargets(new[] { backend }, actor => false, actor => false,
+                    actor => false, actor => false, actors => { }, () => true, actor => forceNewDesktop++);
+                Check(pending.Count == 1 && forceNewDesktop == 0);
+            });
+            test("Reopening Codex after a stop requires a stable interval without old desktop processes", delegate
+            {
+                int checks = 0;
+                bool quiet = ProcessInspector.WaitForDesktopQuietAsync(() => ++checks == 2,
+                    System.Threading.CancellationToken.None, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(35),
+                    TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                Check(quiet && checks == 4);
+                bool blocked = ProcessInspector.WaitForDesktopQuietAsync(() => true, System.Threading.CancellationToken.None,
+                    TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(100)).GetAwaiter().GetResult();
+                Check(!blocked);
+            });
             test("VS Code extension codex remains a blocker after desktop exits", delegate
             {
                 var items = new[] { Snapshot(100, "codex.exe", @"fixture\profile\.vscode\extensions\openai.chatgpt-test\bin\windows-x86_64\codex.exe") };

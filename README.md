@@ -1,6 +1,6 @@
 # Codex 帳號切換器
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.6.7\CodexAccountSwitcher.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.6.13\CodexAccountSwitcher.exe`。
 
 ## 新電腦開始使用
 
@@ -9,6 +9,30 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
 需要自動切換與續聊時，開啟自動監看、桌面控制及桌面續聊。若 Codex 已在執行，先完成目前工作，再正常 Quit 一次，由切換器建立受管連線。桌面控制依賴 Codex 版本相容性；可選的 Local Work 封鎖另有版本檢查。
+
+## v1.6.13：中止後讓 Codex 正常收尾再重開
+
+「中止所有 Codex 程序」會先嘗試正常關閉桌面 App，給後端、傳輸程序及協調器時間自行退出。若桌面仍在運作，請從 App 選單正常 Quit。強制中止只處理已核對的 Codex 後端及整合元件，Codex 開出的其他終端機及工具會保留。用切換器重開前會再確認舊桌面和後端已穩定退出。
+
+## v1.6.12：等待切換時可中止 Codex
+
+切換器等待 Codex 退出時，仍可按「中止所有 Codex 程序」。確認後會先取消等待並完成清理，再強制中止已確認的程序。若帳號已套用，切換會先完成收尾。如果收尾期間出現新的 Codex 程序，切換器會另外列出並請你確認。
+
+## v1.6.11：中止所有 Codex 程序
+
+在主視窗按「中止所有 Codex 程序」可檢查這個 Windows 工作階段的 Codex 桌面、CLI、擴充套件後端、整合協調器及可核對的子程序。確認視窗會列出程序和 PID。確認後，工具會強制中止清單中的程序，並回報仍在運作或退出狀態不明的程序。進行中的 Codex 工作可能因此中斷。需要重新開啟時，按旁邊的「開啟 Codex App」。
+
+## v1.6.10：中止舊後端
+
+已確認舊視窗退出且沒有子程序在工作時，底部的「開啟 Codex App」旁會顯示「中止舊後端…」。確認後，切換器只中止已核對身分的舊後端，等待協調器退出。要重新開啟 Codex，另按「開啟 Codex App」。
+
+## v1.6.9：處理關閉 Codex 後卡住的舊後端
+
+按「開啟 Codex App」時，切換器會讓已退出視窗的後端先完成收尾。若確認只剩一個屬於該舊視窗的後端，且沒有子工作，會詢問是否結束該後端，再繼續開啟。
+
+## v1.6.8：桌面開啟與退出
+
+變更 Local Work 封鎖後，受管 Codex 仍可在閒置時正常切換帳號，並在重開時套用新設定。「開啟 Codex App」會優先顯示已開啟的視窗。舊視窗已退出而後端仍在收尾時，切換器會顯示工作狀態並等候後端結束。
 
 ## v1.6.7：部分 Windows Store 更新可沿用相容性驗證
 
@@ -256,7 +280,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.6.7\codex-account-switcher-vscode.vsix`。
+1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.6.13\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Account Switcher: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。

@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Management;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace CodexAccountSwitcher
 {
@@ -94,27 +97,151 @@ namespace CodexAccountSwitcher
         {
             try
             {
-                int sessionId;
-                using (var current = Process.GetCurrentProcess()) sessionId = current.SessionId;
-                var snapshots = new List<ProcessSnapshot>();
-                var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromSeconds(5) };
-                using (var searcher = new ManagementObjectSearcher("root\\CIMV2",
-                    "SELECT Name, ProcessId, ParentProcessId, ExecutablePath, SessionId, CreationDate FROM Win32_Process", options))
-                using (var results = searcher.Get())
-                    foreach (ManagementObject process in results)
-                        using (process)
-                        {
-                            object pid = process["ProcessId"], parentPid = process["ParentProcessId"], session = process["SessionId"];
-                            string name = process["Name"] as string;
-                            if (pid == null || parentPid == null || session == null || String.IsNullOrWhiteSpace(name))
-                                throw new InvalidOperationException("Incomplete process inspection.");
-                            snapshots.Add(new ProcessSnapshot { Pid = Convert.ToInt32(pid), ParentPid = Convert.ToInt32(parentPid),
-                                SessionId = Convert.ToInt32(session), Name = name, ExecutablePath = process["ExecutablePath"] as string, CreationTime = process["CreationDate"] as string });
-                        }
-                return FromSnapshots(snapshots, sessionId);
+                using (var current = Process.GetCurrentProcess()) return FromSnapshots(ReadSnapshots(), current.SessionId);
             }
             catch (Exception)
             { throw new UserError("無法確認 Codex 背景程序是否已結束，已停止切換。請稍後重試；登入資料尚未變更。"); }
+        }
+
+        private static List<ProcessSnapshot> ReadSnapshots()
+        {
+            var snapshots = new List<ProcessSnapshot>();
+            var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromSeconds(5) };
+            using (var searcher = new ManagementObjectSearcher("root\\CIMV2",
+                "SELECT Name, ProcessId, ParentProcessId, ExecutablePath, SessionId, CreationDate FROM Win32_Process", options))
+            using (var results = searcher.Get())
+                foreach (ManagementObject process in results)
+                    using (process)
+                    {
+                        object pid = process["ProcessId"], parentPid = process["ParentProcessId"], session = process["SessionId"];
+                        string name = process["Name"] as string;
+                        if (pid == null || parentPid == null || session == null || String.IsNullOrWhiteSpace(name))
+                            throw new InvalidOperationException("Incomplete process inspection.");
+                        snapshots.Add(new ProcessSnapshot { Pid = Convert.ToInt32(pid), ParentPid = Convert.ToInt32(parentPid),
+                            SessionId = Convert.ToInt32(session), Name = name, ExecutablePath = process["ExecutablePath"] as string, CreationTime = process["CreationDate"] as string });
+                    }
+            return snapshots;
+        }
+
+        internal static List<DesktopProcessIdentity> FindCodexStopTargets()
+        {
+            using (var current = Process.GetCurrentProcess())
+                return FindCodexStopTargets(ReadSnapshots(), current.SessionId, current.Id, DesktopNative.ReadStandaloneIdentity);
+        }
+
+        internal static List<DesktopProcessIdentity> FindCodexStopTargets(IEnumerable<ProcessSnapshot> snapshots,
+            int sessionId, int controllerPid, Func<int, DesktopProcessIdentity> readIdentity)
+        {
+            var result = new List<DesktopProcessIdentity>();
+            foreach (var item in snapshots.Where(item => item.SessionId == sessionId && item.Pid != controllerPid && IsCandidate(item.Name)))
+            {
+                var identity = readIdentity(item.Pid);
+                if (identity == null) continue;
+                if (MatchesSnapshot(item, identity) && (!IsName(item.Name, "ChatGPT") || IsCodexDesktop(identity.ExecutablePath))) result.Add(identity);
+                else DisposeIdentity(identity);
+            }
+            return result;
+        }
+
+        private static bool MatchesSnapshot(ProcessSnapshot snapshot, DesktopProcessIdentity identity)
+        {
+            return identity.Pid == snapshot.Pid && identity.ParentPid == snapshot.ParentPid && identity.SessionId == snapshot.SessionId &&
+                IsName(Path.GetFileName(identity.ExecutablePath), BaseName(snapshot.Name));
+        }
+
+        internal static bool IsCodexDesktop(string executable)
+        {
+            var directory = new DirectoryInfo(Path.GetDirectoryName(executable));
+            if (!String.Equals(directory.Name, "app", StringComparison.OrdinalIgnoreCase) || directory.Parent == null) return false;
+            var package = directory.Parent;
+            if (!package.Name.StartsWith("OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) ||
+                !package.Name.EndsWith("_2p2nqsd0c76g0", StringComparison.OrdinalIgnoreCase)) return false;
+            try { return String.Equals(DesktopNative.PackagePath(package.Name), package.FullName, StringComparison.OrdinalIgnoreCase); }
+            catch (UserError) { return false; }
+        }
+
+        internal static void DisposeIdentity(DesktopProcessIdentity identity)
+        { if (identity.Lifetime != null) identity.Lifetime.Dispose(); }
+
+        internal static List<DesktopProcessIdentity> StopCodexTargets(IList<DesktopProcessIdentity> targets,
+            Func<DesktopProcessIdentity, bool> isApp, Func<DesktopProcessIdentity, bool> hasWindow,
+            Func<DesktopProcessIdentity, bool> closeNormally, Func<DesktopProcessIdentity, bool> exited,
+            Action<IList<DesktopProcessIdentity>> waitForExit, Func<bool> desktopAppPresent, Action<DesktopProcessIdentity> forceStop)
+        {
+            var desktop = targets.Where(isApp).ToList();
+            foreach (var window in desktop.Where(hasWindow))
+                if (!exited(window) && !closeNormally(window)) return targets.Where(target => !exited(target)).ToList();
+            if (desktop.Count > 0) waitForExit(desktop);
+            if (desktop.Any(target => !exited(target))) return targets.Where(target => !exited(target)).ToList();
+
+            bool hostPresent = targets.Any(target => IsName(Path.GetFileName(target.ExecutablePath), "DesktopRuntimeHost"));
+            // Let managed transports and coordinators retire after the App has flushed and exited.
+            if (desktop.Count > 0 || hostPresent) waitForExit(targets);
+            var pending = targets.Where(target => !exited(target)).ToList();
+            if (pending.Count == 0 || desktopAppPresent()) return pending;
+            var coordinators = pending.Where(target => IsName(Path.GetFileName(target.ExecutablePath), "ManagedBridge", "DesktopRuntimeHost")).ToList();
+            foreach (var target in pending.Except(coordinators))
+                if (!exited(target)) forceStop(target);
+            if (coordinators.Count > 0) waitForExit(coordinators);
+            if (coordinators.Any(target => !exited(target)) && !desktopAppPresent())
+                foreach (var target in coordinators.Where(target => !exited(target))) forceStop(target);
+            return targets.Where(target => !exited(target)).ToList();
+        }
+
+        internal static bool HasDesktopProcesses()
+        {
+            return Inspect().Any(item => item.Kind == "Desktop" || IsName(item.Name, "DesktopRuntimeHost"));
+        }
+
+        internal static bool HasCodexDesktopApp()
+        {
+            using (var current = Process.GetCurrentProcess())
+                return ReadSnapshots().Any(item => item.SessionId == current.SessionId &&
+                    (IsName(item.Name, "ChatGPT") && String.IsNullOrEmpty(item.ExecutablePath) ||
+                     IsName(item.Name, "ChatGPT", "codex") && !String.IsNullOrEmpty(item.ExecutablePath) &&
+                     IsCodexDesktop(item.ExecutablePath)));
+        }
+
+        internal static async Task<bool> WaitForDesktopQuietAsync(Func<bool> hasBlockers, CancellationToken cancellation,
+            TimeSpan quietPeriod, TimeSpan pollDelay, TimeSpan timeout)
+        {
+            var clock = Stopwatch.StartNew();
+            TimeSpan? quietSince = null;
+            while (clock.Elapsed < timeout)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                bool blocked = hasBlockers();
+                cancellation.ThrowIfCancellationRequested();
+                TimeSpan now = clock.Elapsed;
+                if (now >= timeout) break;
+                if (blocked) quietSince = null;
+                else
+                {
+                    if (!quietSince.HasValue) quietSince = now;
+                    if (now - quietSince.Value >= quietPeriod) return true;
+                }
+                await Task.Delay(pollDelay, cancellation).ConfigureAwait(false);
+            }
+            return false;
+        }
+
+        internal static void WaitForProcessExit(IList<DesktopProcessIdentity> actors)
+        {
+            var deadline = Stopwatch.StartNew();
+            while (actors.Any(actor => !DesktopNative.ConfirmedExited(actor)) && deadline.Elapsed < TimeSpan.FromSeconds(4))
+                Thread.Sleep(100);
+        }
+
+        internal static bool HasChildWork(int pid)
+        {
+            var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromSeconds(5) };
+            using (var searcher = new ManagementObjectSearcher("root\\CIMV2",
+                "SELECT Name FROM Win32_Process WHERE ParentProcessId = " + pid.ToString(System.Globalization.CultureInfo.InvariantCulture), options))
+            using (var results = searcher.Get())
+                foreach (ManagementObject process in results)
+                    using (process)
+                        if (!IsName(process["Name"] as string, "conhost")) return true;
+            return false;
         }
 
         public static string Describe(IList<ProcessBlocker> blockers)

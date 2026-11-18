@@ -31,7 +31,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="#E0EDE6" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="#A4BDB1" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="#365047" Margin="0,21,0,16"/>
-          <TextBlock Text="獨立工具 · v1.6.7&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
+          <TextBlock Text="獨立工具 · v1.6.13&#10;適用 Windows 桌面版" Foreground="#88A699" FontSize="11" LineHeight="19"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -147,6 +147,7 @@
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <StackPanel VerticalAlignment="Center" Margin="0,0,16,0"><TextBlock Text="手動切換：閒置後自動關閉受管程式" FontSize="12" Foreground="#52665A" TextWrapping="Wrap"/><TextBlock Text="未連線時按「開啟 Codex App」；既有 App 請正常 Quit。" FontSize="11" Foreground="#8A958E" Margin="0,5,0,0" TextWrapping="Wrap"/></StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <Button x:Name="StopCodexButton" Content="中止所有 Codex 程序" Margin="0,0,8,0" BorderBrush="#BE3838" Foreground="#BE3838" ToolTip="先正常關閉 Codex 桌面，再清理殘留的 Codex 程序"/>
           <Button x:Name="OpenAppButton" Content="開啟 Codex App" Margin="0,0,2,0"/>
           <Button x:Name="RestoreButton" Content="切回上一個" Margin="8,0,10,0"/>
           <Button x:Name="SwitchButton" Content="切換並開啟 Codex  →" Background="#12775D" BorderBrush="#12775D" Foreground="White"/>

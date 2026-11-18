@@ -86,6 +86,9 @@ namespace CodexAccountSwitcher
         private RuntimeCoordinator runtimes;
         private DesktopContinuationWorkflow continuation;
         private bool monitorRequested, suppressMonitorChange, manualOperation, manualFailed, closing;
+        private bool stoppingCodexProcesses, stopCodexConfirmed, reopenAfterCodexStop;
+        private Task manualOperationTask, startupUsageTask;
+        private bool OperationsBusy { get { return busy || manualOperation || stoppingCodexProcesses; } }
         private bool demoDesktopControlRequested = true, desktopStateQuery, desktopAutoStartChecking;
         private bool desktopConnected;
         private bool demoContinueRequested = true;
@@ -116,6 +119,7 @@ namespace CodexAccountSwitcher
             Click("SwitchButton", async delegate { if (Selected != null) { string raw = Selected.Auth; await RunManual(() => Switch(raw)); } });
             Click("RestoreButton", async delegate { if (vault != null && vault.Data.PreviousAuth != null) { string raw = vault.Data.PreviousAuth; await RunManual(() => Switch(raw, true)); } });
             Click("OpenAppButton", async delegate { await RunManual(OpenCodexApp); });
+            Click("StopCodexButton", async delegate { await StopCodexProcesses(); });
             Click("CancelButton", async delegate { if (cancellation != null) cancellation.Cancel(); else await SetMonitoring(false); });
             Click("BrowserButton", delegate { Guard(OpenBrowser); });
             Click("RuntimeButton", async delegate { await InspectRuntimes(); });
@@ -128,6 +132,7 @@ namespace CodexAccountSwitcher
             Window.Closing += async delegate(object sender, System.ComponentModel.CancelEventArgs args)
             {
                 if (closing) return;
+                if (stoppingCodexProcesses) { args.Cancel = true; return; }
                 if (busy || manualOperation) { args.Cancel = true; if (cancellation != null) cancellation.Cancel(); Status("正在取消操作，完成後即可關閉。"); return; }
                 if (automatic != null && automatic.IsRunning)
                 {
@@ -144,7 +149,7 @@ namespace CodexAccountSwitcher
                 if (++desktopConnectionRefreshTicks >= 10)
                 {
                     desktopConnectionRefreshTicks = 0;
-                    if (!busy && !manualOperation && !desktopAutoStartChecking && (automatic == null || !automatic.IsRunning)) await RefreshDesktopControlState();
+                    if (!OperationsBusy && !desktopAutoStartChecking && (automatic == null || !automatic.IsRunning)) await RefreshDesktopControlState();
                 }
             };
             monitorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
@@ -167,7 +172,8 @@ namespace CodexAccountSwitcher
                 if (desktopStartupLifetime.IsCancellationRequested || closing) return;
                 if (runtimes != null) { desktopStartupTimer.Start(); await TryStartDesktopAutomatically(); }
                 if (desktopStartupLifetime.IsCancellationRequested || closing) return;
-                await RefreshUsage();
+                startupUsageTask = RefreshUsage();
+                await startupUsageTask;
                 if (desktopStartupLifetime.IsCancellationRequested || closing) return;
                 if (vault != null && vault.Data.AutoMonitorEnabled) await SetMonitoring(true);
             };
@@ -332,7 +338,7 @@ namespace CodexAccountSwitcher
 
         private async Task SetMonitoring(bool enabled)
         {
-            if (demo || automatic == null || manualOperation || busy) { SetMonitorCheck(monitorRequested); return; }
+            if (demo || automatic == null || OperationsBusy) { SetMonitorCheck(monitorRequested); return; }
             Exception failure = null;
             try
             {
@@ -354,25 +360,34 @@ namespace CodexAccountSwitcher
 
         private async Task MonitorTick()
         {
-            if (!monitorRequested || manualOperation || busy || automatic == null || automatic.IsRunning) return;
+            if (!monitorRequested || OperationsBusy || automatic == null || automatic.IsRunning) return;
             await automatic.TickAsync();
-            if (!closing && !manualOperation) Guard(Refresh);
+            if (!closing && !manualOperation && !stoppingCodexProcesses) Guard(Refresh);
         }
 
-        private async Task RunManual(Func<Task> action)
+        private Task RunManual(Func<Task> action)
         {
-            if (busy || manualOperation) return;
+            if (OperationsBusy) return Task.FromResult(0);
+            manualOperationTask = RunManualCore(action);
+            return manualOperationTask;
+        }
+
+        private async Task RunManualCore(Func<Task> action)
+        {
             manualOperation = true; manualFailed = false; UpdateButtons();
             bool succeeded = false;
             try
             {
                 if (automatic != null) await automatic.StopAsync();
-                Element<TextBlock>("AutoStatus").Text = monitorRequested ? "手動操作中，自動監看暫停。" : "自動監看已關閉。";
-                await action(); succeeded = !manualFailed;
+                if (!stopCodexConfirmed)
+                {
+                    Element<TextBlock>("AutoStatus").Text = monitorRequested ? "手動操作中，自動監看暫停。" : "自動監看已關閉。";
+                    await action(); succeeded = !manualFailed;
+                }
             }
             catch (Exception ex) { ShowError(ex); }
             finally { manualOperation = false; }
-            if (monitorRequested && automatic != null)
+            if (monitorRequested && automatic != null && !stopCodexConfirmed)
             {
                 if (succeeded && automatic.State != AutoSwitchState.Faulted) automatic.Enable();
                 else { monitorRequested = false; monitorTimer.Stop(); SetMonitorCheck(false); Guard(delegate { vault.Data.AutoMonitorEnabled = false; vault.Save(); }); }
@@ -465,10 +480,10 @@ namespace CodexAccountSwitcher
             desktopStateQuery = true;
             try
             {
-                if (!runtimes.Desktop.ControlRequested) { desktopConnected = false; desktopConnectionText = "自動控制已停用"; return; }
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(desktopStartupLifetime.Token))
                 {
                     deadline.CancelAfter(TimeSpan.FromSeconds(15));
+                    if (!runtimes.Desktop.ControlRequested) { desktopConnected = false; desktopConnectionText = "自動控制已停用"; return; }
                     var states = await runtimes.Desktop.InspectAsync(deadline.Token);
                     var connected = states.Where(IsConnectedDesktopSession).ToList();
                     desktopConnected = connected.Count > 0;
@@ -485,7 +500,7 @@ namespace CodexAccountSwitcher
         private async Task TryStartDesktopAutomatically()
         {
             if (demo || runtimes == null || desktopAutoStartChecking || desktopStateQuery || closing || desktopStartupLifetime.IsCancellationRequested ||
-                busy || manualOperation || automatic != null && automatic.IsRunning || Window.OwnedWindows.Cast<Window>().Any(w => w.IsVisible)) return;
+                OperationsBusy || automatic != null && automatic.IsRunning || Window.OwnedWindows.Cast<Window>().Any(w => w.IsVisible)) return;
             desktopAutoStartChecking = true;
             try
             {
@@ -509,7 +524,7 @@ namespace CodexAccountSwitcher
                         desktopConnectionText = desktopConnected ? "已連線；等待其他 Codex 相關程序正常退出" : "待連線；等待現有 Codex 相關程序正常退出";
                         UpdateDesktopControlIndicator(); return;
                     }
-                    if (busy || manualOperation || closing || desktopStartupLifetime.IsCancellationRequested || !runtimes.Desktop.ControlRequested ||
+                    if (OperationsBusy || closing || desktopStartupLifetime.IsCancellationRequested || !runtimes.Desktop.ControlRequested ||
                         Window.OwnedWindows.Cast<Window>().Any(w => w.IsVisible)) return;
                     desktopStartupTimer.Stop();
                     await StartDesktopControl(true);
@@ -524,7 +539,7 @@ namespace CodexAccountSwitcher
             desktopStartupTimer.Stop();
             await RunManual(() => StartDesktopControlCore(automaticStart));
         }
-        private async Task StartDesktopControlCore(bool automaticStart)
+        private async Task StartDesktopControlCore(bool automaticStart, Func<int, bool> confirmCleanup = null)
         {
             desktopStartupTimer.Stop();
             if (automaticStart && !runtimes.Desktop.ControlRequested) return;
@@ -536,7 +551,7 @@ namespace CodexAccountSwitcher
                 string executable = Installation.DesktopExe();
                 if (!automaticStart) runtimes.Desktop.SetControlRequested(true);
                 await runtimes.Desktop.OpenManagedAsync(executable,
-                    text => Window.Dispatcher.Invoke(new Action(() => Status(text))), cancellation.Token);
+                    text => Window.Dispatcher.Invoke(new Action(() => Status(text))), cancellation.Token, confirmCleanup);
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token))
                 {
                     deadline.CancelAfter(TimeSpan.FromSeconds(15));
@@ -555,36 +570,138 @@ namespace CodexAccountSwitcher
             if (demo || runtimes == null) return;
             string executable = Installation.DesktopExe();
             if (String.IsNullOrEmpty(executable) || !File.Exists(executable)) throw new UserError("找不到 Codex App，請先完成安裝後再試。");
-            if (runtimes.Desktop.ControlRequested)
-            {
-                desktopStartupTimer.Stop();
-                using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(desktopStartupLifetime.Token))
-                {
-                    deadline.CancelAfter(TimeSpan.FromSeconds(15));
-                    var states = await runtimes.Desktop.InspectAsync(deadline.Token);
-                    var connected = states.Where(IsConnectedDesktopSession).ToList();
-                    if (connected.Count > 0)
-                    {
-                        bool shown = connected.Any(state => DesktopNative.TryShowApp(state.App));
-                        Status(shown ? "已顯示受管 Codex App。" : "受管 Codex App 已在執行，請從工作列或系統匣開啟現有視窗。");
-                        await RefreshDesktopControlState();
-                        return;
-                    }
-                }
-                await StartDesktopControlCore(true);
-                return;
-            }
+            bool managed = runtimes.Desktop.ControlRequested;
+            if (managed) desktopStartupTimer.Stop();
             var existing = await Task.Run(() => DesktopNative.Snapshot().Where(actor =>
                 String.Equals(actor.ExecutablePath, executable, StringComparison.OrdinalIgnoreCase) && DesktopNative.Same(actor)).ToList());
-            if (existing.Count > 0)
+            if (existing.Count > 0 && (!reopenAfterCodexStop || existing.Any(DesktopNative.HasAppWindow)))
             {
                 bool shown = existing.Any(DesktopNative.TryShowApp);
-                Status(shown ? "已顯示目前的 Codex App。" : "Codex App 已在執行，請從工作列或系統匣開啟現有視窗。");
+                string result = shown ? "已顯示目前的 Codex App。" : "Codex App 已在執行，請從工作列或系統匣開啟現有視窗。";
+                Status(result);
                 await RefreshDesktopControlState();
+                if (managed && !desktopConnected)
+                    Status(result + "要建立桌面控制連線，請完成工作、正常 Quit，再按「開啟 Codex App」。");
+                return;
+            }
+            if (reopenAfterCodexStop)
+            {
+                if (!await WaitForDesktopReopen()) return;
+                reopenAfterCodexStop = false;
+            }
+            if (managed)
+            {
+                await StartDesktopControlCore(true, pid => Window.Dispatcher.Invoke(() =>
+                    !cancellation.IsCancellationRequested && MessageBox.Show(Window,
+                        "舊 Codex 視窗已退出，但後端（PID " + pid + "）仍在執行。強制中止可能中斷舊工作階段。要中止舊後端並開啟 Codex 嗎？",
+                        "中止舊 Codex 後端", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes));
                 return;
             }
             Installation.Launch(executable);
             Status("已送出 Codex App 開啟要求。");
+        }
+
+        private async Task<bool> WaitForDesktopReopen()
+        {
+            busy = true; cancellation = new CancellationTokenSource(); UpdateButtons();
+            try
+            {
+                Status("正在確認舊桌面與後端已穩定退出…");
+                bool quiet = await Task.Run(() => ProcessInspector.WaitForDesktopQuietAsync(
+                    ProcessInspector.HasDesktopProcesses, cancellation.Token,
+                    TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(400), TimeSpan.FromSeconds(15)));
+                if (!quiet) Status("舊 Codex 桌面或後端仍在收尾。請從 Codex 選單正常 Quit，等程序退出後再開啟。");
+                return quiet;
+            }
+            catch (OperationCanceledException) { Status("已取消重開 Codex。"); return false; }
+            finally { busy = false; cancellation.Dispose(); cancellation = null; UpdateButtons(); }
+        }
+
+        private bool ConfirmCodexStop(IList<DesktopProcessIdentity> targets, bool additional = false)
+        {
+            var dialog = new Window { Title = "中止所有 Codex 程序", Owner = Window, Width = 520, SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, Background = Brushes.White,
+                FontFamily = Window.FontFamily, FontSize = Window.FontSize, ShowInTaskbar = false };
+            var panel = new StackPanel { Margin = new Thickness(24) };
+            string reason = additional ? "取消等待後又偵測到其他 Codex 程序，請確認是否一併處理。" :
+                "若正在等待切換，會先取消等待。桌面 App 會先正常退出，殘留的 Codex 後端與協調器才會強制結束。進行中的工作可能中斷。";
+            panel.Children.Add(new TextBlock { Text = "將處理下列 " + targets.Count + " 個 Codex 程序。" + reason,
+                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+            panel.Children.Add(new ListBox { ItemsSource = targets.Select(FormatStopTarget).ToArray(), MaxHeight = 250 });
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
+            var cancel = new Button { Content = "取消", IsCancel = true, IsDefault = true, Padding = new Thickness(14, 6, 14, 6) };
+            var stop = new Button { Content = "確認中止", Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromRgb(163, 44, 44)),
+                Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
+            stop.Click += delegate { dialog.DialogResult = true; };
+            actions.Children.Add(cancel); actions.Children.Add(stop); panel.Children.Add(actions);
+            dialog.Content = panel;
+            dialog.Loaded += delegate { cancel.Focus(); };
+            return dialog.ShowDialog() == true;
+        }
+
+        private static string FormatStopTarget(DesktopProcessIdentity identity)
+        { return Path.GetFileName(identity.ExecutablePath) + "（PID " + identity.Pid + "）"; }
+
+        private async Task StopCodexProcesses()
+        {
+            if (demo || closing || stoppingCodexProcesses) return;
+            stoppingCodexProcesses = true;
+            UpdateButtons();
+            List<DesktopProcessIdentity> targets = null;
+            List<DesktopProcessIdentity> refreshed = null;
+            List<DesktopProcessIdentity> remaining = null;
+            try
+            {
+                Status("正在檢查這個 Windows 工作階段的 Codex 程序…");
+                targets = await Task.Run(() => ProcessInspector.FindCodexStopTargets());
+                if (targets.Count == 0) { Status("目前沒有可確認的 Codex 程序。"); return; }
+                if (!ConfirmCodexStop(targets)) { Status("已取消中止 Codex 程序。"); return; }
+                await WaitForOperationsBeforeCodexStop();
+                refreshed = await Task.Run(() => ProcessInspector.FindCodexStopTargets());
+                var additional = refreshed.Where(candidate => !targets.Any(target => DesktopNative.Equal(target, candidate))).ToList();
+                if (additional.Count > 0 && !ConfirmCodexStop(additional, true))
+                { Status("已取消中止 Codex 程序。"); return; }
+                var approved = targets.Concat(additional).ToList();
+                reopenAfterCodexStop = true;
+                Status("正在嘗試正常關閉 Codex 桌面，並等待後端收尾…");
+                var unconfirmed = await Task.Run(() => ProcessInspector.StopCodexTargets(approved,
+                    target => ProcessInspector.IsCodexDesktop(target.ExecutablePath), DesktopNative.HasAppWindow,
+                    target => DesktopNative.Shutdown(target).Success, DesktopNative.ConfirmedExited,
+                    ProcessInspector.WaitForProcessExit, ProcessInspector.HasCodexDesktopApp,
+                    target => DesktopNative.TerminateVerifiedProcess(target, false)));
+                try { remaining = await Task.Run(() => ProcessInspector.FindCodexStopTargets()); }
+                catch { Status("已確認 " + (approved.Count - unconfirmed.Count) + " 個程序退出，無法重新掃描目前的程序。"); return; }
+                var stillRunning = unconfirmed.Concat(remaining).Select(FormatStopTarget).Distinct().ToArray();
+                string result = "已確認 " + (approved.Count - unconfirmed.Count) + " 個 Codex 程序退出。";
+                Status(stillRunning.Length == 0 ? result + " 需要時可按「開啟 Codex App」。" :
+                    result + " 仍有程序在運作或無法確認退出。若 Codex 視窗仍開著，請從選單正常 Quit。剩餘程序：" + String.Join("、", stillRunning.Take(6)) +
+                    (stillRunning.Length > 6 ? " 等 " + stillRunning.Length + " 個。" : "。"));
+            }
+            catch (OperationCanceledException) { Status("已取消中止 Codex 程序。"); }
+            catch (Exception error) { ShowError(error); }
+            finally
+            {
+                if (targets != null) foreach (var target in targets) ProcessInspector.DisposeIdentity(target);
+                if (refreshed != null) foreach (var target in refreshed) ProcessInspector.DisposeIdentity(target);
+                if (remaining != null) foreach (var target in remaining) ProcessInspector.DisposeIdentity(target);
+                bool resumeMonitoring = stopCodexConfirmed && monitorRequested && automatic != null &&
+                    !automatic.Enabled && automatic.State != AutoSwitchState.Faulted;
+                stopCodexConfirmed = false;
+                stoppingCodexProcesses = false;
+                UpdateButtons();
+                if (resumeMonitoring) Guard(automatic.Enable);
+            }
+            await RefreshDesktopControlState();
+        }
+
+        private async Task WaitForOperationsBeforeCodexStop()
+        {
+            stopCodexConfirmed = true;
+            desktopStartupTimer.Stop();
+            if (cancellation != null) cancellation.Cancel();
+            if (manualOperation && manualOperationTask != null) await manualOperationTask;
+            if (startupUsageTask != null && !startupUsageTask.IsCompleted) await startupUsageTask;
+            if (automatic != null) await automatic.StopAsync();
         }
 
         private void ShowDesktopControl() { CreateDesktopControlDialog().ShowDialog(); }
@@ -642,8 +759,7 @@ namespace CodexAccountSwitcher
                 {
                     runtimes.Desktop.SetBlockLocalWork(blockLocalWork.IsChecked == true);
                     savedBlockLocalWork = blockLocalWork.IsChecked == true;
-                    desktopConnected = false; desktopConnectionText = "Local Work 選項已變更，等待重新啟動"; UpdateDesktopControlIndicator();
-                    localWorkStatus.Text = "設定已儲存。完成目前工作並正常 Quit，再按「開啟受管桌面」後生效；現有桌面會繼續運作。";
+                    localWorkStatus.Text = "設定已儲存。切換器下次重開 Codex 時會套用。";
                 }
                 catch (Exception error)
                 {
@@ -717,8 +833,9 @@ namespace CodexAccountSwitcher
         }
         private void UpdateButtons()
         {
+            bool operationsReady = !OperationsBusy;
             foreach (string name in new[] { "AddButton", "SaveButton", "RefreshButton", "UsageButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton", "MoveUpButton", "MoveDownButton" })
-                Element<Button>(name).IsEnabled = !busy && !manualOperation && (vault != null || demo);
+                Element<Button>(name).IsEnabled = operationsReady && (vault != null || demo);
             Element<Button>("SaveButton").IsEnabled &= current != null;
             foreach (string name in new[] { "RenameButton", "RemoveButton", "SwitchButton" }) Element<Button>(name).IsEnabled &= Selected != null;
             Element<Button>("SwitchButton").IsEnabled &= Selected != null && (current == null || Selected.Id != current.Id || (Selected.PendingLogin && Selected.Auth != currentRaw));
@@ -728,18 +845,19 @@ namespace CodexAccountSwitcher
             Element<Button>("MoveDownButton").IsEnabled &= List.SelectedIndex >= 0 && List.SelectedIndex < List.Items.Count - 1;
             if (demo)
                 foreach (string name in new[] { "AddButton", "SaveButton", "RenameButton", "RemoveButton", "SwitchButton", "RestoreButton" }) Element<Button>(name).IsEnabled = false;
-            List.IsEnabled = !busy && !manualOperation;
+            List.IsEnabled = operationsReady;
             bool autoRunning = automatic != null && automatic.IsRunning;
-            Element<Button>("OpenAppButton").IsEnabled = !demo && runtimes != null && !busy && !manualOperation && !autoRunning;
-            Element<Button>("CancelButton").IsEnabled = busy || autoRunning;
+            Element<Button>("OpenAppButton").IsEnabled = !demo && runtimes != null && operationsReady && !autoRunning;
+            Element<Button>("StopCodexButton").IsEnabled = !demo && !closing && !stoppingCodexProcesses;
+            Element<Button>("CancelButton").IsEnabled = !stoppingCodexProcesses && (busy || autoRunning);
             Element<StackPanel>("ProgressActions").Visibility = busy || autoRunning ? Visibility.Visible : Visibility.Collapsed;
-            Element<CheckBox>("MonitorCheck").IsEnabled = !demo && vault != null && !manualOperation && !busy;
-            Element<CheckBox>("InterruptCheck").IsEnabled = !demo && vault != null && !manualOperation && !busy && !autoRunning;
-            Element<Button>("ContinueDesktopButton").IsEnabled = (demo || vault != null) && !manualOperation && !busy && !autoRunning;
+            Element<CheckBox>("MonitorCheck").IsEnabled = !demo && vault != null && operationsReady;
+            Element<CheckBox>("InterruptCheck").IsEnabled = !demo && vault != null && operationsReady && !autoRunning;
+            Element<Button>("ContinueDesktopButton").IsEnabled = (demo || vault != null) && operationsReady && !autoRunning;
             UpdateContinuationButton();
-            Element<Button>("RuntimeButton").IsEnabled = !demo && vault != null && !manualOperation && !busy && !autoRunning;
-            Element<Button>("DesktopControlButton").IsEnabled = (demo || runtimes != null) && !busy && !manualOperation && !autoRunning;
-            Element<Button>("IntegrationButton").IsEnabled = !busy && !manualOperation && !autoRunning;
+            Element<Button>("RuntimeButton").IsEnabled = !demo && vault != null && operationsReady && !autoRunning;
+            Element<Button>("DesktopControlButton").IsEnabled = (demo || runtimes != null) && operationsReady && !autoRunning;
+            Element<Button>("IntegrationButton").IsEnabled = operationsReady && !autoRunning;
             UpdateDesktopControlIndicator();
             UpdateRecommendation();
         }
@@ -807,7 +925,7 @@ namespace CodexAccountSwitcher
         private void UpdateRecommendation()
         {
             var recommended = RecommendedRow(DateTimeOffset.UtcNow);
-            Element<Button>("SelectPriorityButton").IsEnabled = !busy && !manualOperation && recommended != null;
+            Element<Button>("SelectPriorityButton").IsEnabled = !OperationsBusy && recommended != null;
             Element<TextBlock>("PriorityHint").Text = "越上方越優先 · 僅採用 1 分鐘內且未到重設時間的額度";
         }
         private void SelectPriority()
@@ -827,7 +945,7 @@ namespace CodexAccountSwitcher
                     if (row.Usage != null) { row.Usage.FetchedAt = DateTimeOffset.UtcNow; row.SetUsage(row.Usage); }
                 UpdateButtons(); return;
             }
-            if (busy || vault == null || List.Items.Count == 0) return;
+            if (busy || stopCodexConfirmed || vault == null || List.Items.Count == 0) return;
             busy = true; cancellation = new CancellationTokenSource();
             Element<Button>("BrowserButton").Visibility = Visibility.Collapsed;
             UpdateButtons();

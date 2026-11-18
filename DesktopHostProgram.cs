@@ -386,7 +386,8 @@ namespace CodexAccountSwitcher
         private Process initialApp;
         private DesktopProcessIdentity app;
         private NamedPipeServerStream listening;
-        private bool disposed, ownerExitCleanup, metadataHealthy = true, recoveryAccepted;
+        private bool disposed, metadataHealthy = true, recoveryAccepted;
+        private volatile bool ownerExitCleanup, appliedBlockLocalWork;
         private string lastReason;
         private DesktopContinuationCheckpoint continuationCheckpoint;
         private string continuationOperationId;
@@ -456,9 +457,12 @@ namespace CodexAccountSwitcher
         }
         internal static bool ConfigurationAuthorizes(DesktopIntegrationConfiguration config, DesktopHostSpecification value)
         {
+            return RuntimeControlAuthorized(config, value) && config.BlockLocalWork == value.BlockLocalWork;
+        }
+        internal static bool RuntimeControlAuthorized(DesktopIntegrationConfiguration config, DesktopHostSpecification value)
+        {
             return config != null && value != null && config.ProtocolVersion == 1 && config.Enabled && config.ResolveControlRequested() &&
                 !String.IsNullOrEmpty(value.AuthorizationGeneration) && config.AuthorizationGeneration == value.AuthorizationGeneration &&
-                config.BlockLocalWork == value.BlockLocalWork &&
                 String.Equals(DesktopSessionFiles.Canonical(config.Home), DesktopSessionFiles.Canonical(value.Home), StringComparison.OrdinalIgnoreCase);
         }
         internal static void ConfigureIndependentLocalWorkCli(ProcessStartInfo start, string verifiedCliExecutable, bool blockLocalWork)
@@ -486,17 +490,16 @@ namespace CodexAccountSwitcher
             }
             catch { return false; }
         }
-        private bool Enabled()
+        private DesktopIntegrationConfiguration ReadAuthorizedConfiguration()
         {
             try
             {
                 var config = DesktopSessionFiles.ReadConfiguration(spec.ConfigurationPath);
-                if (config.BlockLocalWork != spec.BlockLocalWork) lastReason = "localWorkPolicyChanged";
-                else if (lastReason == "localWorkPolicyChanged") lastReason = null;
-                return ConfigurationAuthorizes(config, spec);
+                return RuntimeControlAuthorized(config, spec) ? config : null;
             }
-            catch { return false; }
+            catch { return null; }
         }
+        private bool Enabled() { return ReadAuthorizedConfiguration() != null; }
         private string Key(DesktopProcessIdentity value) { return value.Pid + ":" + value.StartedUtc; }
         private bool TrackApp(DesktopProcessIdentity value)
         {
@@ -615,7 +618,7 @@ namespace CodexAccountSwitcher
                 lock (transaction.Admission)
                 {
                     member.MarkDisconnected();
-                    if (!member.Exited0) { server.Freeze(); transaction.Frozen = true; transaction.Stage = "orphaned"; }
+                    if (!ownerExitCleanup && !member.Exited0) { server.Freeze(); transaction.Frozen = true; transaction.Stage = "orphaned"; }
                     // A socket EOF never ends the backend's private input.
                     Persist();
                 }
@@ -629,6 +632,12 @@ namespace CodexAccountSwitcher
         }
         private void StartListenerAndAppLocked()
         {
+            // Each launch uses the current preference. An edit does not revoke control of
+            // an already running App. The initial bootstrap still binds to its launch spec.
+            var config = DesktopSessionFiles.ReadConfiguration(spec.ConfigurationPath);
+            if (!RuntimeControlAuthorized(config, spec) || initialApp == null && !ConfigurationAuthorizes(config, spec))
+                throw new IOException("Desktop launch authorization changed.");
+            bool blockLocalWork = config.BlockLocalWork;
             continuationSourceMember = null;
             continuationAdmission = continuationCheckpoint == null || continuationOperationId == null ? null :
                 new ContinuationAdmission(continuationCheckpoint.ThreadId, continuationOperationId, continuationCheckpoint.Model,
@@ -649,8 +658,8 @@ namespace CodexAccountSwitcher
             start.EnvironmentVariables["CAS_DESKTOP_RELAY_HOST_PID"] = identity.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture);
             start.EnvironmentVariables["CAS_DESKTOP_RELAY_HOST_STARTED_UTC"] = identity.StartedUtc;
             start.EnvironmentVariables["CAS_DESKTOP_RELAY_SESSION_DIRECTORY"] = spec.Directory;
-            DesktopLocalWorkPolicy.Configure(start, target, spec.Directory, spec.BlockLocalWork);
-            ConfigureIndependentLocalWorkCli(start, target.CliExecutable, spec.BlockLocalWork);
+            DesktopLocalWorkPolicy.Configure(start, target, spec.Directory, blockLocalWork);
+            ConfigureIndependentLocalWorkCli(start, target.CliExecutable, blockLocalWork);
             if (!String.IsNullOrEmpty(spec.UiProfile)) start.EnvironmentVariables["CODEX_ELECTRON_USER_DATA_PATH"] = spec.UiProfile; else start.EnvironmentVariables.Remove("CODEX_ELECTRON_USER_DATA_PATH");
             if (!String.IsNullOrEmpty(spec.SqliteHome)) start.EnvironmentVariables["CODEX_SQLITE_HOME"] = spec.SqliteHome; else start.EnvironmentVariables.Remove("CODEX_SQLITE_HOME");
             if (!String.IsNullOrEmpty(spec.FixtureProfileRoot))
@@ -685,6 +694,7 @@ namespace CodexAccountSwitcher
                 foreach (string key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" }) Environment.SetEnvironmentVariable(key, start.EnvironmentVariables[key]);
             initialApp = Process.Start(start); app = DesktopNative.Identity(initialApp.Id);
             if (app == null || !TrackApp(app)) throw new IOException("Launched desktop process identity unavailable.");
+            appliedBlockLocalWork = blockLocalWork;
             transaction.Stage = "starting"; transaction.Frozen = false; transaction.EofCommitted = false; ownerExitCleanup = false; recoveryAccepted = false; Persist();
         }
         internal void Run()
@@ -699,7 +709,7 @@ namespace CodexAccountSwitcher
             {
                 try
                 {
-                    bool healthy = RefreshMemberStatus(transaction.Admission, transaction.Members);
+                    bool healthy = ownerExitCleanup || RefreshMemberStatus(transaction.Admission, transaction.Members);
                     lock (transaction.Admission)
                     {
                         metadataHealthy = healthy; RefreshActors();
@@ -779,6 +789,7 @@ namespace CodexAccountSwitcher
         }
         internal static bool ShouldCleanupOwnerExit(string stage, bool eofCommitted, bool enabled)
         {
+            if (stage == "ownerExitCleanup") return true;
             if (stage == "closingApp" || stage == "committing") return false;
             // A transaction retains its independent control host for the reply and restoration.
             // Explicit revocation may end that host only after the owner and every backend are gone.
@@ -845,11 +856,14 @@ namespace CodexAccountSwitcher
             bool transportReady = live.Length > 0 && live.All(m => !m.Disconnected && m.Bridge.TransportReady) && appRoots.Any(DesktopNative.Same);
             var uncertain = live.FirstOrDefault(m => !DesktopSessionFiles.Flag(m.Last, "known"));
             string backendReason = uncertain == null ? null : SafeBackendReason(DesktopSessionFiles.Text(uncertain.Last, "reason"));
+            var config = ReadAuthorizedConfiguration();
+            bool controlEnabled = config != null;
+            string policyReason = controlEnabled && config.BlockLocalWork != appliedBlockLocalWork ? "localWorkPolicyChanged" : null;
             return new DesktopSessionState { SessionId = spec.SessionId, Generation = transaction.Generation, Host = identity, App = app,
                 Home = Path.GetFullPath(spec.Home), PipeName = pipeName, OwnedActors = actors.GroupBy(Key).Select(g => g.First()).ToList(),
-                Known = known, Idle = known && (quiesced || live.All(m => DesktopSessionFiles.Quiet(m.Last))) && active == 0 && pending == 0 && background == 0, TransportReady = transportReady, ControlEnabled = Enabled(), State = PublicSnapshotStage(transaction.Stage, quiesced),
+                Known = known, Idle = known && (quiesced || live.All(m => DesktopSessionFiles.Quiet(m.Last))) && active == 0 && pending == 0 && background == 0, TransportReady = transportReady, ControlEnabled = controlEnabled, State = PublicSnapshotStage(transaction.Stage, quiesced),
                 ActiveTurns = active, PendingRequests = pending, BackgroundTerminals = background, AllBackendsExited = allExited, AppExitConfirmed = gone,
-                RecoveryAccepted = recoveryAccepted, OwnerExitCleanup = ownerExitCleanup, Reason = transaction.Stage == "quiesced" && !quiesced ? "desktopQuiescenceProofLost" : transaction.Reason ?? lastReason ?? backendReason,
+                RecoveryAccepted = recoveryAccepted, OwnerExitCleanup = ownerExitCleanup, Reason = transaction.Stage == "quiesced" && !quiesced ? "desktopQuiescenceProofLost" : transaction.Reason ?? lastReason ?? backendReason ?? policyReason,
                 BackendExitCode = failedBackend == null ? (int?)null : failedBackend.Bridge.ExitCode };
         }
         private static string SafeBackendReason(string value)
@@ -1142,14 +1156,20 @@ namespace CodexAccountSwitcher
                                 else if (method == "status")
                                 {
                                     lock (transaction.Admission) if (expectedGeneration != transaction.Generation) throw new IOException("Stale desktop generation.");
-                                    bool healthy = RefreshMemberStatus(transaction.Admission, transaction.Members);
+                                    bool healthy = ownerExitCleanup || RefreshMemberStatus(transaction.Admission, transaction.Members);
                                     lock (transaction.Admission)
                                     {
                                         if (expectedGeneration != transaction.Generation) throw new IOException("Stale desktop generation.");
                                         metadataHealthy = healthy; RefreshActors();
                                     }
                                 }
-                                else if (method == "quiesce") transaction.Quiesce(connected, expectedGeneration);
+                                else if (method == "quiesce")
+                                {
+                                    var config = ReadAuthorizedConfiguration();
+                                    if (config != null && config.BlockLocalWork && !appliedBlockLocalWork)
+                                        DesktopLocalWorkPolicy.ValidateTarget(target);
+                                    transaction.Quiesce(connected, expectedGeneration);
+                                }
                                 else if (method == "disable")
                                 { lock (transaction.Admission) { if (expectedGeneration != transaction.Generation || Enabled()) throw new IOException("Configuration revocation was not committed."); transaction.CancelBeforeEof(); } }
                                 else if (method == "restore") Restore(connected, expectedGeneration, request);

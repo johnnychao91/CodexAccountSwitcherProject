@@ -51,11 +51,13 @@ namespace CodexAccountSwitcher
         public DesktopSessionState() { ProtocolVersion = 1; OwnedActors = new List<DesktopProcessIdentity>(); }
         public string Describe()
         {
-            string detail = BackendExitCode.HasValue ? "受管後端已退出（代碼 " + BackendExitCode.Value + "），請正常 Quit 後重新啟用" :
+            string detail = OwnerExitCleanup && State != "exited" ? "舊桌面視窗已退出，正在等待它的 Codex 後端結束" :
+                BackendExitCode.HasValue ? "受管後端已退出（代碼 " + BackendExitCode.Value + "），請正常 Quit 後重新啟用" :
                 Reason == "desktopStatusTimeout" || Reason == "desktopStatusRejected" || Reason == "desktopStatusUnavailable" ? UnknownDetail() :
                 !ControlEnabled ? (Reason == "localWorkPolicyChanged" ? "Local Work 選項已變更，請正常 Quit 後重新開啟受管桌面" : "自動控制已停用，請從 Codex 選單正常 Quit") : !Known ? UnknownDetail() :
                 State == "quiesced" && AllBackendsExited && AppExitConfirmed ? "已正常暫停，等待恢復" :
                 Idle ? "閒置" : "忙碌，執行中回合 " + ActiveTurns + "、待處理要求 " + PendingRequests + "、背景工作 " + BackgroundTerminals;
+            if (ControlEnabled && Reason == "localWorkPolicyChanged") detail += "，下次重開時套用 Local Work 設定";
             return "桌面控制：" + detail + "。";
         }
         private string UnknownDetail()
@@ -418,7 +420,7 @@ namespace CodexAccountSwitcher
         {
             var config = ReadConfiguration(); config.BlockLocalWork = value;
             // A preference cannot authorize control or create an authorization generation.
-            // A running host with a different choice becomes uncontrolled until normal Quit.
+            // An authorized host applies this choice when it next launches the App.
             DesktopSessionFiles.CreatePrivate(integration); DesktopSessionFiles.Write(configuration, config);
         }
         private List<DesktopSessionState> Records()
@@ -487,12 +489,79 @@ namespace CodexAccountSwitcher
         { return LaunchIfEnabledAsync(appExe, null, cancellation); }
         public Task LaunchIfEnabledAsync(string appExe, Action<string> status, CancellationToken cancellation)
         { return LaunchIfEnabledAsync(appExe, status, cancellation, false); }
-        public async Task OpenManagedAsync(string appExe, Action<string> status, CancellationToken cancellation)
+        public async Task OpenManagedAsync(string appExe, Action<string> status, CancellationToken cancellation, Func<int, bool> confirmCleanup = null)
         {
             cancellation.ThrowIfCancellationRequested();
             if (!ControlRequested) throw new UserError("桌面控制已關閉，已停止受管啟動；登入資料未變更。");
+            if (confirmCleanup != null)
+                await CleanupDetachedBackendAsync(appExe, confirmCleanup, status, cancellation).ConfigureAwait(false);
             if (Enabled) await LaunchIfEnabledAsync(appExe, status, cancellation, true).ConfigureAwait(false);
             else await EnableAndLaunchAsync(appExe, status, cancellation).ConfigureAwait(false);
+        }
+        private async Task CleanupDetachedBackendAsync(string appExe, Func<int, bool> confirm, Action<string> status, CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var record = FindDetachedSession();
+            if (record == null) return;
+            if (status != null) status(record.Describe() + " 可按「取消」。");
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellation).ConfigureAwait(false);
+            var fresh = FindDetachedSession();
+            if (fresh == null || !SameDetachedSession(record, fresh)) return;
+            var target = validatePrerequisites(appExe);
+            var backend = VerifiedDetachedBackend(fresh, target);
+            if (backend != null)
+            {
+                if (ProcessInspector.HasChildWork(backend.Pid))
+                    throw new UserError("舊 Codex 後端仍有子程序在運作，請等它們結束後再開啟。");
+                if (!confirm(backend.Pid)) throw new OperationCanceledException();
+                cancellation.ThrowIfCancellationRequested();
+                record = FindDetachedSession();
+                var verified = record != null && SameDetachedSession(fresh, record) ? VerifiedDetachedBackend(record, target) : null;
+                if (!DesktopNative.ConfirmedExited(backend) &&
+                    (!DesktopNative.Equal(backend, verified) || !DesktopNative.TerminateVerifiedBackend(backend)))
+                    throw new UserError("舊後端的身分或狀態已變更，請再按一次「開啟 Codex App」重新檢查。");
+            }
+            else if (fresh.OwnedActors.Any(actor => !DesktopNative.Equal(actor, fresh.Host) && !DesktopNative.ConfirmedExited(actor)))
+                throw new UserError("舊桌面後端仍在執行，尚無法驗證其身分。請稍後再開啟。");
+            if (status != null) status("舊後端已結束，正在等待桌面控制協調器退出…");
+            var clock = Stopwatch.StartNew();
+            while (!DesktopNative.ConfirmedExited(fresh.Host))
+            {
+                if (clock.Elapsed >= TimeSpan.FromSeconds(20))
+                    throw new UserError("舊後端已結束，協調器仍在收尾。請稍後再按「開啟 Codex App」。");
+                await Task.Delay(300, cancellation).ConfigureAwait(false);
+            }
+        }
+        private DesktopSessionState FindDetachedSession()
+        {
+            var candidates = Records().Where(record => record.OwnerExitCleanup && DesktopNative.Same(record.Host) &&
+                (record.State == "ownerExitCleanup" || record.Reason == "previousInstallationStillRunning")).ToArray();
+            if (candidates.Length != 1) return null;
+            var candidate = candidates[0];
+            var snapshot = DesktopSessionFiles.ReadSnapshot(Path.Combine(sessions, candidate.SessionId, "session.json"));
+            return SameDetachedSession(candidate, snapshot) && snapshot.OwnerExitCleanup && snapshot.State == "ownerExitCleanup" &&
+                !snapshot.TransportReady && DesktopNative.Same(snapshot.Host) &&
+                DesktopNative.ConfirmedExited(snapshot.App) ? snapshot : null;
+        }
+        private static bool SameDetachedSession(DesktopSessionState a, DesktopSessionState b)
+        {
+            return b != null && b.SessionId == a.SessionId && b.Generation == a.Generation &&
+                DesktopNative.Equal(a.Host, b.Host) && DesktopNative.Equal(a.App, b.App);
+        }
+        private DesktopProcessIdentity VerifiedDetachedBackend(DesktopSessionState record, DesktopPackageTarget target)
+        {
+            var launch = DesktopSessionFiles.ReadSpecification(Path.Combine(sessions, record.SessionId, "launch.json"));
+            if (launch.SessionId != record.SessionId ||
+                !String.Equals(Path.GetFileName(record.Host.ExecutablePath), "DesktopRuntimeHost.exe", StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(launch.HostExecutable, record.Host.ExecutablePath, StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(launch.AppExecutable, record.App.ExecutablePath, StringComparison.OrdinalIgnoreCase) ||
+                !String.Equals(launch.PackageFullName, target.PackageFullName, StringComparison.OrdinalIgnoreCase)) return null;
+            var remaining = record.OwnedActors.Where(actor => !DesktopNative.Equal(actor, record.Host) &&
+                !DesktopNative.ConfirmedExited(actor)).ToArray();
+            if (remaining.Length != 1 || remaining[0].ParentPid != record.Host.Pid ||
+                !String.Equals(remaining[0].ExecutablePath, target.CliExecutable, StringComparison.OrdinalIgnoreCase) ||
+                !DesktopNative.Same(remaining[0])) return null;
+            return remaining[0];
         }
         private async Task LaunchIfEnabledAsync(string appExe, Action<string> status, CancellationToken cancellation, bool waitForUnmanaged)
         {
@@ -509,6 +578,8 @@ namespace CodexAccountSwitcher
             }
             foreach (var state in states.Where(s => DesktopNative.Same(s.Host)))
             {
+                if (state.OwnerExitCleanup && state.State != "exited")
+                    throw new UserError("舊桌面視窗已退出，Codex 後端仍在收尾。請稍後再按「開啟 Codex App」。");
                 if (!state.Known || !state.ControlEnabled) throw new UserError("既有桌面整合狀態未知，請先正常 Quit 後恢復，避免重複啟動。");
                 if (state.State == "quiesced" && state.AllBackendsExited && state.AppExitConfirmed)
                 { touched.Add(state.SessionId); HadManagedDesktop = true; await RestoreAsync().ConfigureAwait(false); return; }

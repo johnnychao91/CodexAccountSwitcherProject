@@ -740,17 +740,47 @@ namespace CodexAccountSwitcher
                 Check(DesktopRuntimeHost.ConfigurationAuthorizes(config, spec), "A matching legacy authorization was rejected.");
                 config.BlockLocalWork = true;
                 Check(!DesktopRuntimeHost.ConfigurationAuthorizes(config, spec), "A stale or tampered launch bypassed the requested block.");
+                Check(DesktopRuntimeHost.RuntimeControlAuthorized(config, spec), "Changing a launch preference revoked control of an existing desktop.");
                 spec.BlockLocalWork = true; Check(DesktopRuntimeHost.ConfigurationAuthorizes(config, spec), "A matching explicit policy was rejected.");
-                config.BlockLocalWork = false; Check(!DesktopRuntimeHost.ConfigurationAuthorizes(config, spec), "A running host retained authority after a preference change.");
-                config.BlockLocalWork = true; config.Enabled = false; Check(!DesktopRuntimeHost.ConfigurationAuthorizes(config, spec), "A matching policy reauthorized disabled control.");
+                config.BlockLocalWork = false;
+                Check(!DesktopRuntimeHost.ConfigurationAuthorizes(config, spec) && DesktopRuntimeHost.RuntimeControlAuthorized(config, spec),
+                    "Disabling the block lost existing control or permitted a stale bootstrap.");
+                config.AuthorizationGeneration = "replacement";
+                Check(!DesktopRuntimeHost.RuntimeControlAuthorized(config, spec), "A previous generation retained control after reauthorization.");
+                config.AuthorizationGeneration = spec.AuthorizationGeneration;
+                config.BlockLocalWork = true; config.Enabled = false; Check(!DesktopRuntimeHost.RuntimeControlAuthorized(config, spec), "A matching policy reauthorized disabled control.");
                 var state = new DesktopSessionState { ControlEnabled = false, Reason = "localWorkPolicyChanged" };
                 Check(state.Describe().Contains("選項已變更") && state.Describe().Contains("正常 Quit"), "A policy change omitted its normal-restart explanation.");
+                state.ControlEnabled = true; state.Known = state.Idle = true;
+                Check(state.Describe().Contains("閒置") && state.Describe().Contains("下次重開"), "A pending preference hid the existing desktop state.");
+                state.OwnerExitCleanup = true; state.State = "ownerExitCleanup";
+                Check(state.Describe().Contains("視窗已退出"), "The stale backend was presented as a still-open App.");
             });
         }
         private static ProcessBlocker FirstEnableDesktop(int pid)
         { return new ProcessBlocker { Pid = pid, Kind = "Desktop", Name = "ChatGPT.exe", Description = "Fixture desktop App or background process" }; }
         private static void RegisterManagedOpenTests(Action<string, Action> test)
         {
+            test("Explicit managed open never offers orphan recovery while the original owner still exists", delegate
+            {
+                var live = DesktopNative.Identity(Process.GetCurrentProcess().Id);
+                Check(live != null, "Fixture process identity unavailable.");
+                using (var fixture = new RecordFixture(live, live))
+                {
+                    fixture.Record.App = live;
+                    fixture.Record.OwnerExitCleanup = true;
+                    fixture.Record.State = "ownerExitCleanup";
+                    fixture.Record.Known = fixture.Record.Idle = false;
+                    fixture.Save();
+                    int prompts = 0, validations = 0;
+                    var client = new DesktopSessionClient(fixture.Root, fixture.Root,
+                        () => new List<ProcessBlocker>(), exe => { validations++; throw new IOException("Fixture launch guard."); });
+                    Check(Rejected(() => client.OpenManagedAsync("synthetic-app", null, CancellationToken.None,
+                        pid => { prompts++; return false; }).GetAwaiter().GetResult()), "The fixture unexpectedly launched.");
+                    Check(prompts == 0 && validations == 1 && DesktopNative.Same(live), "A live owner was treated as an orphan.");
+                }
+                if (live.Lifetime != null) live.Lifetime.Dispose();
+            });
             test("Explicit managed open preserves a saved off preference before inspecting or validating launch", delegate
             {
                 var dead = DeadCatalogIdentity(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopRuntimeHost.exe"));
@@ -1488,6 +1518,7 @@ namespace CodexAccountSwitcher
                 Check(!DesktopRuntimeHost.ShouldCleanupOwnerExit(h.Session.Stage, h.Session.EofCommitted, true), "Recovery would dispose its control pipe before restoration.");
                 Check(!DesktopRuntimeHost.ShouldCleanupOwnerExit("quiesced", true, true) && DesktopRuntimeHost.ShouldCleanupOwnerExit("running", false, true), "Transactional close and ordinary owner exit were conflated.");
                 Check(DesktopRuntimeHost.ShouldCleanupOwnerExit("recoveryRequired", true, false), "Explicitly disabled, fully gone ownership could not be released.");
+                Check(DesktopRuntimeHost.ShouldCleanupOwnerExit("ownerExitCleanup", true, true), "Restored authorization abandoned cleanup already in progress.");
             });
             test("Desktop orphan busy generation retains input and blocks replacement admission", delegate
             {

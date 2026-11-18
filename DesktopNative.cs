@@ -84,6 +84,8 @@ namespace CodexAccountSwitcher
         [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(SafeProcessHandle process, out FileTime created, out FileTime exited, out FileTime kernel, out FileTime user);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint code);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(SafeProcessHandle process, uint code);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, int flags, StringBuilder name, ref int size);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ProcessIdToSessionId(int pid, out int session);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);
@@ -126,6 +128,7 @@ namespace CodexAccountSwitcher
         private static int CurrentSession()
         { int session; return ProcessIdToSessionId(GetCurrentProcessId(), out session) ? session : -1; }
         public static DesktopProcessIdentity Identity(int pid) { return ReadIdentity(pid, true); }
+        internal static DesktopProcessIdentity ReadStandaloneIdentity(int pid) { return ReadIdentity(pid, false); }
         private static DesktopProcessIdentity ReadIdentity(int pid, bool parent)
         {
             if (pid <= 0) return null;
@@ -164,6 +167,34 @@ namespace CodexAccountSwitcher
             var current = ReadIdentity(identity.Pid, false);
             try { return Equal(identity, current); }
             finally { if (current != null && current.Lifetime != null) current.Lifetime.Dispose(); }
+        }
+        internal static bool ConfirmedExited(DesktopProcessIdentity identity)
+        {
+            DateTimeOffset started;
+            if (identity == null || identity.Pid <= 0 || !DateTimeOffset.TryParse(identity.StartedUtc,
+                CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out started)) return false;
+            using (var handle = OpenProcess(0x1000, false, identity.Pid))
+            {
+                if (handle.IsInvalid) return Marshal.GetLastWin32Error() == 87; // No process with that PID.
+                FileTime created, exited, kernel, user;
+                return GetProcessTimes(handle, out created, out exited, out kernel, out user) &&
+                    (!StartedMatches(created, identity.StartedUtc) || Value(exited) != 0);
+            }
+        }
+        internal static bool TerminateVerifiedBackend(DesktopProcessIdentity identity)
+        { return TerminateVerifiedProcess(identity, true); }
+
+        internal static bool TerminateVerifiedProcess(DesktopProcessIdentity identity, bool requireNoChildren)
+        {
+            using (var handle = OpenProcess(0x101001, false, identity.Pid))
+            {
+                FileTime created, exited, kernel, user;
+                if (handle.IsInvalid || !GetProcessTimes(handle, out created, out exited, out kernel, out user) ||
+                    !StartedMatches(created, identity.StartedUtc) || !Same(identity)) return ConfirmedExited(identity);
+                if (requireNoChildren && ProcessInspector.HasChildWork(identity.Pid)) return false;
+                return (TerminateProcess(handle, 1) || WaitForSingleObject(handle, 0) == 0) &&
+                    WaitForSingleObject(handle, 7000) == 0;
+            }
         }
         internal static string AppToolsPipeName(string path)
         {
@@ -364,6 +395,22 @@ namespace CodexAccountSwitcher
                 }
             }
             catch { return false; }
+        }
+        internal static bool HasAppWindow(DesktopProcessIdentity identity)
+        {
+            if (!Same(identity)) return false;
+            try
+            {
+                using (var process = Process.GetProcessById(identity.Pid))
+                {
+                    IntPtr window = process.MainWindowHandle;
+                    uint owner;
+                    return window != IntPtr.Zero && GetWindowThreadProcessId(window, out owner) != 0 &&
+                        owner == (uint)identity.Pid && Same(identity);
+                }
+            }
+            catch (InvalidOperationException) { return false; }
+            catch (ArgumentException) { return false; }
         }
         public static DesktopShutdownResult Shutdown(DesktopProcessIdentity identity)
         {
