@@ -92,6 +92,8 @@ namespace CodexAccountSwitcher
         {
             // The pinned App invokes `app-server --print-startup-config` before
             // starting JSON-RPC. That one-shot command must reach the real CLI.
+            // A sign-out recovery is also one-shot. The pass-through allowlist
+            // rejects it because it can remove the login even when printing policy.
             return args != null && Array.IndexOf(args, "app-server") >= 0 &&
                 !args.Any(arg => arg == "--print-startup-config" || arg == "--help" || arg == "--version" || arg == "-h" || arg == "-V");
         }

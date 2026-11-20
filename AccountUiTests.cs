@@ -114,7 +114,15 @@ namespace CodexAccountSwitcher
                 try
                 {
                     var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-                    typeof(MainView).GetField("continuationCompatible", flags).SetValue(view, false);
+                    var compatible = typeof(MainView).GetField("continuationCompatible", flags);
+                    var enabled = typeof(MainView).GetProperty("DesktopContinuationEnabled", flags);
+                    string fixture = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+                    typeof(MainView).GetField("runtimes", flags).SetValue(view, new RuntimeCoordinator(fixture, fixture));
+                    Check(!(bool)enabled.GetValue(view, null));
+                    compatible.SetValue(view, true);
+                    Check((bool)enabled.GetValue(view, null));
+                    compatible.SetValue(view, false);
+                    Check(!(bool)enabled.GetValue(view, null));
                     typeof(MainView).GetMethod("UpdateButtons", flags).Invoke(view, null);
                     Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("版本未通過驗證，暫不執行"));
                     typeof(MainView).GetField("busy", flags).SetValue(view, true);

@@ -14,15 +14,31 @@ namespace CodexAccountSwitcher
         private const string ReviewedApp = "CF2EE1CE895DF9EE158EE61830D9D0F805C77D9B212AD0E159AE605AE04260C6";
         private const string ReviewedCli = "094D4DB493DE22025712CC5963854E7654B7C97F4CEE795E3E986270A0F4F6B4";
         private const string ReviewedContents = "11530809958CF5F76F2E85270AC7947611ACB78F366F9AA4154B699A58535429";
+        private const string November20App = "F171B2B4B4011EC5CC243864B1E0FC674391EAC09C08CAD7DFBB58ABE8768003";
+        private const string November20Cli = "49B0AD59A400C0812791D5F5518E9CDDB2A32E21E918801800655DBAB29382A1";
+        private const string November20Contents = "20E7A7AA28C5C2572DF9ECA37D3B75683EFEDFD4A14637F8462F2F0C3618F43F";
+        private const string November21App = "AF4D57201946260D2754172BC660EFF80B5398EA146EF466126886CCD0CF2514";
+        private const string November21Cli = "180CC98D8BE7B3EDC1D881875692444D8462CDC00A8209C6093BC499F0918D30";
+        private const string November21Contents = "638E83CBB51AC11F198639BB88214E74CCD901635D25B507FB25498E549391D4";
         private static readonly byte[] PngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
-        internal static bool Matches(Stream archive, string archivePath, DesktopPackageTarget target)
+        internal static bool Matches(Stream archive, string archivePath, DesktopPackageTarget target, bool allowLocalWorkOnly)
         {
             if (String.IsNullOrEmpty(target.PackageFullName) || String.IsNullOrEmpty(target.CliExecutable))
                 return false;
-            if (FileDigest(target.AppExecutable) != ReviewedApp || FileDigest(target.CliExecutable) != ReviewedCli)
-                return false;
-            return Fingerprint(archive, archivePath + ".unpacked") == ReviewedContents;
+            string app = FileDigest(target.AppExecutable);
+            if (app != ReviewedApp && app != November20App && !(allowLocalWorkOnly && app == November21App)) return false;
+            string cli = FileDigest(target.CliExecutable);
+            string expected = ExpectedContents(app, cli, allowLocalWorkOnly);
+            return expected != null && Fingerprint(archive, archivePath + ".unpacked") == expected;
+        }
+
+        internal static string ExpectedContents(string app, string cli, bool allowLocalWorkOnly = false)
+        {
+            if (app == ReviewedApp && cli == ReviewedCli) return ReviewedContents;
+            if (app == November20App && cli == November20Cli) return November20Contents;
+            if (allowLocalWorkOnly && app == November21App && cli == November21Cli) return November21Contents;
+            return null;
         }
 
         internal static string Fingerprint(Stream archive, string unpackedRoot)

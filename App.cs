@@ -165,7 +165,7 @@ namespace CodexAccountSwitcher
                 await RefreshContinuationCompatibility();
                 if (continuation != null) await continuation.RecoverPendingAsync();
                 if (continuation != null && continuation.WaitingForQuotaSourceId != null &&
-                    (!vault.Data.AutoMonitorEnabled || !(vault.Data.AutoContinueDesktop ?? true) || !runtimes.Desktop.ControlRequested))
+                    (!vault.Data.AutoMonitorEnabled || !DesktopContinuationEnabled))
                     await continuation.CancelAsync();
                 if (desktopStartupLifetime.IsCancellationRequested || closing) return;
                 if (runtimes != null) await RefreshDesktopControlState();
@@ -225,6 +225,8 @@ namespace CodexAccountSwitcher
         }
 
         private bool ContinuationRequested { get { return demo ? demoContinueRequested : vault != null && (vault.Data.AutoContinueDesktop ?? true); } }
+        private bool DesktopContinuationEnabled
+        { get { return continuationCompatible == true && ContinuationRequested && runtimes != null && runtimes.Desktop.ControlRequested; } }
         private async Task ToggleContinuation()
         {
             if (busy || manualOperation || automatic != null && automatic.IsRunning) return;
@@ -245,6 +247,11 @@ namespace CodexAccountSwitcher
             catch { }
             continuationCompatible = supported;
             UpdateContinuationButton();
+            if (!supported && continuation != null && continuation.WaitingForQuotaSourceId != null)
+            {
+                await continuation.CancelAsync();
+                Element<TextBlock>("ContinuationStatusText").Text = "Codex 版本未通過驗證，已取消這次額度等待；自動監看仍可依設定切換帳號。";
+            }
         }
         private void UpdateContinuationButton()
         {
@@ -269,7 +276,7 @@ namespace CodexAccountSwitcher
             DesktopContinuationCheckpoint capturedCheckpoint = null;
             return new DesktopContinuationWorkflow(new ContinuationTicketStore(storage, home), new DesktopContinuationOperations
             {
-                Enabled = () => vault != null && (vault.Data.AutoContinueDesktop ?? true) && runtimes.Desktop.ControlRequested,
+                Enabled = () => DesktopContinuationEnabled,
                 ReadCurrentId = delegate { string raw = Files.ReadAuth(Path.Combine(home, "auth.json")); return raw == null ? null : Account.Parse(raw).Id; },
                 Capture = async token => { capturedCheckpoint = await runtimes.Desktop.CaptureContinuationAsync(token); return capturedCheckpoint; },
                 BeforeInterrupt = WaitForContinuationPrerequisites,

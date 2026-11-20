@@ -61,6 +61,39 @@ namespace CodexAccountSwitcher
                 Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, digest)), "A modified same-size archive was accepted.");
                 Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.UpdatedArchiveLength, null)), "A missing digest was accepted.");
             });
+            test("Current package accepts the reviewed 9664 archive and rejects cross-version fingerprints", delegate
+            {
+                const long length = 783725118;
+                const string hash = "A538C8BFA0BF6A43B06C4C62AAD93616A78C4CAD306602CC05F528844A551598";
+                var digest = Enumerable.Range(0, 32).Select(i => Convert.ToByte(hash.Substring(i * 2, 2), 16)).ToArray();
+                DesktopContinuationCompatibility.ValidateArchiveDigest(length, digest);
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(length, digest);
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(DesktopContinuationCompatibility.CurrentArchiveLength, digest)),
+                    "A new archive was accepted under the old size.");
+                digest[0] ^= 1;
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(length, digest)) &&
+                    Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(length, digest)), "An altered 9664 archive was accepted.");
+                const string app = "F171B2B4B4011EC5CC243864B1E0FC674391EAC09C08CAD7DFBB58ABE8768003";
+                const string cli = "49B0AD59A400C0812791D5F5518E9CDDB2A32E21E918801800655DBAB29382A1";
+                const string oldCli = "094D4DB493DE22025712CC5963854E7654B7C97F4CEE795E3E986270A0F4F6B4";
+                Check(DesktopArchiveCompatibility.ExpectedContents(app, cli) == "20E7A7AA28C5C2572DF9ECA37D3B75683EFEDFD4A14637F8462F2F0C3618F43F" &&
+                    DesktopArchiveCompatibility.ExpectedContents(app, oldCli) == null, "The normalized profile allowed a mismatched CLI.");
+            });
+            test("Package 3838 enables Local Work protection without authorizing legacy desktop continuation", delegate
+            {
+                const long length = 443772048;
+                const string hash = "2334574ABBF17086F34F60C228D2A32FC18DDB4044477771DB6763023299A871";
+                var digest = Enumerable.Range(0, 32).Select(i => Convert.ToByte(hash.Substring(i * 2, 2), 16)).ToArray();
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(length, digest);
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(length, digest)),
+                    "The Local Work review incorrectly authorized the legacy continuation transport.");
+                const string app = "AF4D57201946260D2754172BC660EFF80B5398EA146EF466126886CCD0CF2514";
+                const string cli = "180CC98D8BE7B3EDC1D881875692444D8462CDC00A8209C6093BC499F0918D30";
+                Check(DesktopArchiveCompatibility.ExpectedContents(app, cli, true) ==
+                    "638E83CBB51AC11F198639BB88214E74CCD901635D25B507FB25498E549391D4" &&
+                    DesktopArchiveCompatibility.ExpectedContents(app, cli) == null,
+                    "A normalized Local Work-only archive incorrectly authorized continuation.");
+            });
             test("Desktop conversation IPC frames use little-endian UTF8 lengths and tolerate partial reads", delegate
             {
                 using (var bytes = new MemoryStream())

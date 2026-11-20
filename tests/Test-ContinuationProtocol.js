@@ -9,7 +9,11 @@ const profiles = [
   { version: '26.1106.6628.0', length: 772825694, hash: '54b74a9131680fc9eead711ed5d9f718f6127c22222ca60d2e3b577a707e2485',
     symbols: { override: 'WI', path: 'et', fs: 'eb', error: 'WL', options: 'WO', diagnostic: 'WJ' } },
   { version: '26.1111.2228.0', length: 783750654, hash: '2551cba1057a05cdc5cf5d75b146fac4092bff4ce77a10c43e3286c88d24c82d',
-    symbols: { override: 'MA', path: 'eJ', fs: 'rt', error: 'MX', options: 'M0', diagnostic: 'MY' } }
+    symbols: { override: 'MA', path: 'eJ', fs: 'rt', error: 'MX', options: 'M0', diagnostic: 'MY' } },
+  { version: '26.1111.9664.0', length: 783725118, hash: 'a538c8bfa0bf6a43b06c4c62aad93616a78c4cad306602cc05f528844a551598',
+    symbols: { override: 'MA', path: 'eJ', fs: 'rt', error: 'MX', options: 'M0', diagnostic: 'MY' } },
+  { version: '26.1117.3838.0', length: 443772048, hash: '2334574abbf17086f34f60c228d2a32fc18ddb4044477771db6763023299a871',
+    localWorkOnly: true, symbols: { override: 'Ec', path: 'tp', fs: 'rF', error: 'EO', options: 'Ej', diagnostic: 'ED' } }
 ];
 async function main() {
   if (!process.argv[2]) throw Error('Pass the reviewed app.asar path.');
@@ -56,6 +60,12 @@ async function main() {
       assert.strictEqual(registrations, kind === 'file' ? 1 : 0); assert.strictEqual(registryOptions, kind === 'file' ? 1 : 0);
       assert.strictEqual(restarts, 0); assert.strictEqual(executor.state.ready, false);
       if (kind !== 'file') assert(executor.state.error.includes('must point to an executable file'));
+    }
+    if (profile.localWorkOnly) {
+      assert(!scripts.some(s => s.includes('case"thread-follower-interrupt-turn":try{')));
+      console.log(JSON.stringify({ passed: 3, reviewedPackage: profile.version, actualBundleDispatch: false,
+        localWorkStartupVerified: true, syntheticOnly: true, appStarted: false }));
+      return;
     }
     const text = scripts.find(s => s.includes('"thread-owner-discovery":1,"thread-follower-start-turn":2')); assert(text);
     const point = text.indexOf('"thread-owner-discovery":1,"thread-follower-start-turn":2');

@@ -24,6 +24,8 @@ namespace CodexAccountSwitcher
         private const string November6ArchiveSha256 = "54B74A9131680FC9EEAD711ED5D9F718F6127C22222CA60D2E3B577A707E2485";
         internal const long CurrentArchiveLength = 783750654;
         internal const string CurrentArchiveSha256 = "2551CBA1057A05CDC5CF5D75B146FAC4092BFF4CE77A10C43E3286C88D24C82D";
+        internal const long November20ArchiveLength = 783725118;
+        internal const string November20ArchiveSha256 = "A538C8BFA0BF6A43B06C4C62AAD93616A78C4CAD306602CC05F528844A551598";
         internal const int OwnerVersion = 1, InterruptVersion = 4, StartVersion = 2;
         private const string UnsupportedVersion = "目前 Codex 版本尚未通過自動續聊相容性驗證，已停止自動中止與續聊；請更新帳號切換器。";
         internal static void ValidateTarget(DesktopPackageTarget target)
@@ -37,6 +39,7 @@ namespace CodexAccountSwitcher
             if (length == November3ArchiveLength) return November3ArchiveSha256;
             if (length == November6ArchiveLength) return November6ArchiveSha256;
             if (length == CurrentArchiveLength) return CurrentArchiveSha256;
+            if (length == November20ArchiveLength) return November20ArchiveSha256;
             return null;
         }
         internal static void ValidateArchiveDigest(long length, byte[] digest)

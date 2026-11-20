@@ -23,6 +23,10 @@ namespace CodexAccountSwitcher
         private const string November6ArchiveSha256 = "54B74A9131680FC9EEAD711ED5D9F718F6127C22222CA60D2E3B577A707E2485";
         internal const long CurrentArchiveLength = 783750654;
         internal const string CurrentArchiveSha256 = "2551CBA1057A05CDC5CF5D75B146FAC4092BFF4CE77A10C43E3286C88D24C82D";
+        internal const long November20ArchiveLength = 783725118;
+        internal const string November20ArchiveSha256 = "A538C8BFA0BF6A43B06C4C62AAD93616A78C4CAD306602CC05F528844A551598";
+        private const long November21ArchiveLength = 443772048;
+        private const string November21ArchiveSha256 = "2334574ABBF17086F34F60C228D2A32FC18DDB4044477771DB6763023299A871";
         private const string UnsupportedVersion = "目前 Codex 桌面版本尚未通過 Local Work 封鎖相容性驗證。請先關閉 Local Work 封鎖選項，或更新切換器後再啟動受管桌面。";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -38,7 +42,7 @@ namespace CodexAccountSwitcher
         private static extern bool ReadArchiveInformation(SafeFileHandle file, out ArchiveInformation information);
 
         internal static void ValidateTarget(DesktopPackageTarget target)
-        { ValidateArchive(target, ExpectedDigest, UnsupportedVersion); }
+        { ValidateArchive(target, ExpectedDigest, UnsupportedVersion, allowLocalWorkOnly: true); }
 
         private static string ExpectedDigest(long length)
         {
@@ -48,11 +52,14 @@ namespace CodexAccountSwitcher
             if (length == November3ArchiveLength) return November3ArchiveSha256;
             if (length == November6ArchiveLength) return November6ArchiveSha256;
             if (length == CurrentArchiveLength) return CurrentArchiveSha256;
+            if (length == November20ArchiveLength) return November20ArchiveSha256;
+            if (length == November21ArchiveLength) return November21ArchiveSha256;
             return null;
         }
 
         // Shared file identity reader only; each feature supplies its own policy.
-        internal static void ValidateArchive(DesktopPackageTarget target, Func<long, string> expectedDigest, string unsupportedVersion)
+        internal static void ValidateArchive(DesktopPackageTarget target, Func<long, string> expectedDigest,
+            string unsupportedVersion, bool allowLocalWorkOnly = false)
         {
             try
             {
@@ -83,7 +90,7 @@ namespace CodexAccountSwitcher
                             using (var sha = SHA256.Create())
                                 if (BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "") == expected) return;
                         }
-                        if (!DesktopArchiveCompatibility.Matches(stream, archive, target))
+                        if (!DesktopArchiveCompatibility.Matches(stream, archive, target, allowLocalWorkOnly))
                             throw new UserError(unsupportedVersion);
                     }
                 }
