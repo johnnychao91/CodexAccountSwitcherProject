@@ -11,6 +11,7 @@ $targetRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromP
 $files = @(
     '.gitattributes', '.gitignore', 'App.config', 'App.cs', 'build.ps1', 'Codex帳號切換器.cmd',
     'Core.cs', 'DesktopLauncher.cs', 'MainWindow.xaml', 'ProcessInspector.cs',
+    'codex-roster-transparent.png', 'RosterIcon.ico',
     'ProcessInspectorTests.cs', 'README.md', 'SelfTests.cs', 'SwitchWorkflow.cs',
     'ProjectSidebar.cs', 'ProjectSidebarTests.cs',
     'SwitchWorkflowTests.cs', 'tests/FakeCodex.cs', 'tests/LaunchProbe.cs',
@@ -91,7 +92,9 @@ foreach ($relative in $files) {
         throw "Required source file is missing: $relative"
     }
     $hashBefore = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
-    $lines = [IO.File]::ReadAllLines($sourceFile)
+    # Binary image assets are hash-verified and copied, but are not text-scanned.
+    $lines = @()
+    if ($relative -notin @('codex-roster-transparent.png', 'RosterIcon.ico')) { $lines = [IO.File]::ReadAllLines($sourceFile) }
     for ($index = 0; $index -lt $lines.Length; $index++) {
         foreach ($match in [regex]::Matches($lines[$index], $emailPattern)) {
             if ($match.Groups[1].Value -notmatch $exampleDomain) {

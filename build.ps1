@@ -15,11 +15,14 @@ foreach ($assembly in @('PresentationFramework.dll', 'PresentationCore.dll', 'Wi
         throw "The .NET Framework WPF assembly $assembly was not found in $wpf. Install or repair .NET Framework 4.8."
     }
 }
-$release = Join-Path $projectRoot 'dist-v1.6.17'
+$release = Join-Path $projectRoot 'dist-v1.6.18'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
     "/out:$app", "/resource:$(Join-Path $projectRoot 'MainWindow.xaml'),MainWindow.xaml",
+    "/resource:$(Join-Path $projectRoot 'codex-roster-transparent.png'),RosterLogo.png",
+    "/resource:$(Join-Path $projectRoot 'RosterIcon.ico'),RosterIcon.ico",
+    "/win32icon:$(Join-Path $projectRoot 'RosterIcon.ico')",
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Security.dll', '/reference:System.Web.Extensions.dll', '/reference:System.Xml.dll', '/reference:System.Management.dll', '/reference:System.Net.Http.dll',
     "/reference:$(Join-Path $wpf 'PresentationFramework.dll')", "/reference:$(Join-Path $wpf 'PresentationCore.dll')", "/reference:$(Join-Path $wpf 'WindowsBase.dll')", '/reference:System.Xaml.dll',
     (Join-Path $projectRoot 'Core.cs'), (Join-Path $projectRoot 'DesktopLauncher.cs'), (Join-Path $projectRoot 'ProcessInspector.cs'), (Join-Path $projectRoot 'SwitchWorkflow.cs'), (Join-Path $projectRoot 'App.cs'), (Join-Path $projectRoot 'SelfTests.cs'), (Join-Path $projectRoot 'AccountOrderTests.cs'), (Join-Path $projectRoot 'AccountUiTests.cs'), (Join-Path $projectRoot 'ProcessInspectorTests.cs'), (Join-Path $projectRoot 'SwitchWorkflowTests.cs'), (Join-Path $projectRoot 'UsageModels.cs'), (Join-Path $projectRoot 'UsageModelTests.cs'), (Join-Path $projectRoot 'UsageSession.cs'), (Join-Path $projectRoot 'UsageSessionTests.cs'), (Join-Path $projectRoot 'AutoSwitchController.cs'), (Join-Path $projectRoot 'AutoSwitchTests.cs'), (Join-Path $projectRoot 'ManagedRuntimeClient.cs'), (Join-Path $projectRoot 'ManagedRuntimeClientTests.cs'))

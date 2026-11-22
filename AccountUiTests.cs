@@ -20,6 +20,26 @@ namespace CodexAccountSwitcher
         }
         public static void Register(Action<string, Action> test)
         {
+            test("Brand artwork appears in the sidebar, upper-right header and window chrome", delegate
+            {
+                var view = new MainView(true);
+                try
+                {
+                    var logo = (Image)view.Window.FindName("RosterLogo");
+                    var headerIcon = (Image)view.Window.FindName("RosterHeaderIcon");
+                    var icon = (System.Windows.Media.Imaging.BitmapSource)view.Window.Icon;
+                    Check(logo.Source.Width > logo.Width && logo.Width >= 128);
+                    Check(ReferenceEquals(headerIcon.Source, icon) && icon.PixelWidth == 32);
+                    Check(ReferenceEquals(view.Window.Background, RosterTheme.Cream));
+                    Check(ReferenceEquals(Button(view, "AddButton").Background, RosterTheme.Primary));
+                    new System.Windows.Interop.WindowInteropHelper(view.Window).EnsureHandle();
+                    var dialog = (Window)typeof(MainView).GetMethod("CreateThemedDialog", BindingFlags.Instance | BindingFlags.NonPublic)
+                        .Invoke(view, new object[] { "Preview", 430.0 });
+                    try { Check(ReferenceEquals(dialog.Icon, icon) && ReferenceEquals(dialog.Background, RosterTheme.Cream)); }
+                    finally { dialog.Close(); }
+                }
+                finally { view.Window.Close(); }
+            });
             test("Stop all Codex processes is always visible next to Open App and disabled in demo mode", delegate
             {
                 var view = new MainView(true);

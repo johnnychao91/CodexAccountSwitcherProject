@@ -8,17 +8,17 @@ if not "%2"=="" goto invalid_arguments
 set "SWITCHER_BUILD_ONLY=1"
 
 :arguments_ready
-set "SWITCHER_APP=%~dp0dist-v1.6.17\CodexAccountSwitcher.exe"
+set "SWITCHER_APP=%~dp0dist-v1.6.18\CodexAccountSwitcher.exe"
 if not exist "%SWITCHER_APP%" goto missing_dependency
 if not exist "%SWITCHER_APP%.config" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\ManagedBridge.exe" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\ManagedBridge.exe.config" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\codex-account-switcher-vscode.vsix" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\DesktopRuntimeHost.exe" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\DesktopRuntimeHost.exe.config" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\DesktopAppRelay.exe" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\DesktopAppRelay.exe.config" goto missing_dependency
-if not exist "%~dp0dist-v1.6.17\desktop-start.ps1" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\ManagedBridge.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\ManagedBridge.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\codex-account-switcher-vscode.vsix" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\DesktopRuntimeHost.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\DesktopRuntimeHost.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\DesktopAppRelay.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\DesktopAppRelay.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.18\desktop-start.ps1" goto missing_dependency
 goto launch
 
 :missing_dependency

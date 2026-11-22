@@ -16,6 +16,27 @@ using System.Windows.Threading;
 
 namespace CodexAccountSwitcher
 {
+    public static class RosterTheme
+    {
+        public static readonly Brush Primary = BrandBrush(0x5A4C8C);
+        public static readonly Brush Lavender = BrandBrush(0x8E7EC6);
+        public static readonly Brush Mist = BrandBrush(0xE8DEF5);
+        public static readonly Brush Gold = BrandBrush(0xB48257);
+        public static readonly Brush SoftGold = BrandBrush(0xD9B996);
+        public static readonly Brush Cream = BrandBrush(0xF9F2EA);
+        public static readonly Brush Surface = BrandBrush(0xFFFBF7);
+        public static readonly Brush Ink = BrandBrush(0x312644);
+        public static readonly Brush Muted = BrandBrush(0x5E536C);
+        public static readonly Brush Warning = BrandBrush(0x79472F);
+
+        private static Brush BrandBrush(int rgb)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+            brush.Freeze();
+            return brush;
+        }
+    }
+
     public sealed class AccountRow : INotifyPropertyChanged
     {
         public static readonly TimeSpan UsageMaxAge = TimeSpan.FromMinutes(1);
@@ -36,7 +57,7 @@ namespace CodexAccountSwitcher
         public string AvailabilityText
         { get { return IsUsageRefreshing ? "查詢中" : Availability == UsageAvailability.Available ? "額度可用" : Availability == UsageAvailability.Exhausted ? "額度已用完" : "狀態未知 · 請更新額度"; } }
         public Brush AvailabilityBrush
-        { get { return Availability == UsageAvailability.Available ? Brushes.SeaGreen : Availability == UsageAvailability.Exhausted ? Brushes.Firebrick : Brushes.DimGray; } }
+        { get { return Availability == UsageAvailability.Available ? RosterTheme.Primary : Availability == UsageAvailability.Exhausted ? RosterTheme.Warning : RosterTheme.Muted; } }
         public event PropertyChangedEventHandler PropertyChanged;
         public AccountRow() { UsageNote = "尚未查詢額度"; }
         public bool FiveHourAvailable { get { return Usage != null && Usage.FiveHour != null && Usage.FiveHour.RemainingPercent.HasValue; } }
@@ -106,6 +127,9 @@ namespace CodexAccountSwitcher
             home = Installation.CodexHome;
             storage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexAccountSwitcher");
             using (var source = typeof(MainView).Assembly.GetManifestResourceStream("MainWindow.xaml")) Window = (Window)XamlReader.Load(source);
+            Window.Icon = LoadArtwork("RosterIcon.ico", 32);
+            Element<Image>("RosterLogo").Source = LoadArtwork("RosterLogo.png");
+            Element<Image>("RosterHeaderIcon").Source = Window.Icon;
             Window.Height = Math.Min(Window.Height, Math.Max(Window.MinHeight, SystemParameters.WorkArea.Height - 24));
             List.SelectionChanged += delegate { UpdateButtons(); };
             Click("RefreshButton", async delegate { await RunManual(async delegate { Refresh(); await RefreshUsage(); }); });
@@ -178,6 +202,15 @@ namespace CodexAccountSwitcher
                 if (desktopStartupLifetime.IsCancellationRequested || closing) return;
                 if (vault != null && vault.Data.AutoMonitorEnabled) await SetMonitoring(true);
             };
+        }
+
+        private static BitmapFrame LoadArtwork(string resource, int width = 0)
+        {
+            using (var stream = typeof(MainView).Assembly.GetManifestResourceStream(resource))
+            {
+                var frames = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames;
+                return width == 0 ? frames[0] : frames.First(frame => frame.PixelWidth == width);
+            }
         }
 
         private void CreateAutomatic()
@@ -260,9 +293,9 @@ namespace CodexAccountSwitcher
             bool requested = ContinuationRequested;
             var button = Element<Button>("ContinueDesktopButton");
             button.Content = requested ? "關閉自動續跑" : "開啟自動續跑";
-            button.Background = new SolidColorBrush(requested ? Color.FromRgb(18, 119, 93) : Colors.White);
-            button.Foreground = new SolidColorBrush(requested ? Colors.White : Color.FromRgb(18, 119, 93));
-            button.BorderBrush = new SolidColorBrush(Color.FromRgb(18, 119, 93));
+            button.Background = requested ? RosterTheme.Primary : RosterTheme.Surface;
+            button.Foreground = requested ? Brushes.White : RosterTheme.Primary;
+            button.BorderBrush = RosterTheme.Primary;
             button.ToolTip = "記住此開關；不會立即送出訊息。需版本相容、自動監看及受管桌面連線。";
             var label = Element<TextBlock>("ContinuationModeText");
             label.Text = !requested ? "自動續跑：已關閉" : continuationSupport == DesktopContinuationSupport.LocalWorkOnly ?
@@ -271,7 +304,7 @@ namespace CodexAccountSwitcher
                 "自動續跑：設定已開啟 · 版本尚未確認" : !monitorRequested ?
                 "自動續跑：已開啟 · 等待開啟自動監看" : !desktopConnected ?
                 "自動續跑：已開啟 · 等待桌面連線" : "自動續跑：已開啟 · 等待額度觸發";
-            label.Foreground = new SolidColorBrush(requested && continuationSupport != DesktopContinuationSupport.Supported ? Color.FromRgb(148, 97, 21) : Color.FromRgb(18, 119, 93));
+            label.Foreground = requested && continuationSupport != DesktopContinuationSupport.Supported ? RosterTheme.Warning : RosterTheme.Primary;
             UpdateContinuationDetail();
         }
 
@@ -471,15 +504,15 @@ namespace CodexAccountSwitcher
             catch
             {
                 Element<Button>("DesktopControlButton").Content = "桌面控制：狀態未知…";
-                Element<Button>("DesktopControlButton").Background = new SolidColorBrush(Color.FromRgb(255, 244, 220));
-                Element<Button>("DesktopControlButton").BorderBrush = new SolidColorBrush(Color.FromRgb(170, 119, 36));
-                Element<Button>("DesktopControlButton").Foreground = new SolidColorBrush(Color.FromRgb(130, 83, 18));
+                Element<Button>("DesktopControlButton").Background = RosterTheme.Cream;
+                Element<Button>("DesktopControlButton").BorderBrush = RosterTheme.Gold;
+                Element<Button>("DesktopControlButton").Foreground = RosterTheme.Warning;
                 Element<TextBlock>("DesktopControlStatusText").Text = "桌面控制：無法讀取設定，尚未確認開關狀態。";
                 return;
             }
             var button = Element<Button>("DesktopControlButton");
             button.Content = requested ? "桌面控制：已開啟…" : "桌面控制：已關閉…";
-            var outline = new SolidColorBrush(requested ? Color.FromRgb(18, 119, 93) : Color.FromRgb(190, 56, 56));
+            var outline = requested ? RosterTheme.Primary : RosterTheme.Warning;
             bool filled = requested && desktopConnected;
             button.Background = filled ? outline : Brushes.Transparent;
             button.BorderBrush = outline;
@@ -641,20 +674,31 @@ namespace CodexAccountSwitcher
             finally { busy = false; cancellation.Dispose(); cancellation = null; UpdateButtons(); }
         }
 
+        private Window CreateThemedDialog(string title, double width)
+        {
+            var dialog = new Window { Title = title, Owner = Window, Width = width, Icon = Window.Icon,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize,
+                Background = RosterTheme.Cream, Foreground = RosterTheme.Ink, FontFamily = Window.FontFamily };
+            dialog.Resources[typeof(Button)] = Window.Resources[typeof(Button)];
+            return dialog;
+        }
+
         private bool ConfirmCodexStop(IList<DesktopProcessIdentity> targets, bool additional = false)
         {
-            var dialog = new Window { Title = "中止所有 Codex 程序", Owner = Window, Width = 520, SizeToContent = SizeToContent.Height,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, Background = Brushes.White,
-                FontFamily = Window.FontFamily, FontSize = Window.FontSize, ShowInTaskbar = false };
+            var dialog = CreateThemedDialog("中止所有 Codex 程序", 520);
+            dialog.SizeToContent = SizeToContent.Height;
+            dialog.FontSize = Window.FontSize;
+            dialog.ShowInTaskbar = false;
             var panel = new StackPanel { Margin = new Thickness(24) };
             string reason = additional ? "取消等待後又偵測到其他 Codex 程序，請確認是否一併處理。" :
                 "若正在等待切換，會先取消等待。桌面 App 會先正常退出，殘留的 Codex 後端與協調器才會強制結束。進行中的工作可能中斷。";
             panel.Children.Add(new TextBlock { Text = "將處理下列 " + targets.Count + " 個 Codex 程序。" + reason,
                 TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
-            panel.Children.Add(new ListBox { ItemsSource = targets.Select(FormatStopTarget).ToArray(), MaxHeight = 250 });
+            panel.Children.Add(new ListBox { ItemsSource = targets.Select(FormatStopTarget).ToArray(), MaxHeight = 250,
+                Background = RosterTheme.Surface, Foreground = RosterTheme.Ink, BorderBrush = RosterTheme.SoftGold });
             var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
             var cancel = new Button { Content = "取消", IsCancel = true, IsDefault = true, Padding = new Thickness(14, 6, 14, 6) };
-            var stop = new Button { Content = "確認中止", Foreground = Brushes.White, Background = new SolidColorBrush(Color.FromRgb(163, 44, 44)),
+            var stop = new Button { Content = "確認中止", Foreground = Brushes.White, Background = RosterTheme.Warning, BorderBrush = RosterTheme.Warning,
                 Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(8, 0, 0, 0) };
             stop.Click += delegate { dialog.DialogResult = true; };
             actions.Children.Add(cancel); actions.Children.Add(stop); panel.Children.Add(actions);
@@ -731,8 +775,8 @@ namespace CodexAccountSwitcher
         private void ShowDesktopControl() { CreateDesktopControlDialog().ShowDialog(); }
         private Window CreateDesktopControlDialog()
         {
-            var dialog = new Window { Title = "桌面控制", Owner = Window, Width = 610, Height = Math.Min(570, SystemParameters.WorkArea.Height - 40),
-                WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, FontFamily = Window.FontFamily, Background = Brushes.White };
+            var dialog = CreateThemedDialog("桌面控制", 610);
+            dialog.Height = Math.Min(570, SystemParameters.WorkArea.Height - 40);
             var panel = new StackPanel { Margin = new Thickness(25) };
             bool requested = DesktopControlRequested;
             var stateTitle = new TextBlock { Name = "DesktopControlStateTitle", FontSize = 18, FontWeight = FontWeights.SemiBold };
@@ -748,8 +792,8 @@ namespace CodexAccountSwitcher
                 bool enabled = DesktopControlRequested;
                 controlSwitch.IsChecked = enabled;
                 stateTitle.Text = enabled ? "● 桌面控制已開啟" : "○ 桌面控制已關閉";
-                stateTitle.Foreground = new SolidColorBrush(enabled ? Color.FromRgb(18, 119, 93) : Color.FromRgb(91, 102, 96));
-                stateBadge.Background = new SolidColorBrush(enabled ? Color.FromRgb(231, 247, 239) : Color.FromRgb(238, 241, 239));
+                stateTitle.Foreground = enabled ? RosterTheme.Primary : RosterTheme.Muted;
+                stateBadge.Background = enabled ? RosterTheme.Mist : RosterTheme.Surface;
                 stateDetail.Text = enabled ? "開啟設定已保留 · " + desktopConnectionText : "關閉設定已保留；重新開啟切換器不會自動啟用。";
                 UpdateDesktopControlIndicator();
             };
@@ -776,7 +820,7 @@ namespace CodexAccountSwitcher
             var blockLocalWork = new CheckBox { Content = "受管桌面封鎖 Local Work（重新啟動後生效）", IsChecked = savedBlockLocalWork,
                 IsEnabled = !demo && runtimes != null && !busy && !manualOperation && (automatic == null || !automatic.IsRunning), Margin = new Thickness(0, 14, 0, 0) };
             var localWorkStatus = new TextBlock { Text = "僅影響下次由切換器啟動的桌面。請正常 Quit 後重新開啟；封鎖後 Local Work 無法使用，可能顯示設定錯誤。無法驗證 App 版本時會停止啟動。",
-                TextWrapping = TextWrapping.Wrap, LineHeight = 20, Foreground = new SolidColorBrush(Color.FromRgb(82, 102, 90)), Margin = new Thickness(0, 6, 0, 0) };
+                TextWrapping = TextWrapping.Wrap, LineHeight = 20, Foreground = RosterTheme.Muted, Margin = new Thickness(0, 6, 0, 0) };
             blockLocalWork.Click += delegate
             {
                 try
@@ -807,8 +851,8 @@ namespace CodexAccountSwitcher
         private Window CreateVSCodeIntegrationDialog()
         {
             string package = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "codex-account-switcher-vscode.vsix");
-            var dialog = new Window { Title = "VS Code 實驗整合", Owner = Window, Width = 610, Height = Math.Min(290, SystemParameters.WorkArea.Height - 40),
-                WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, FontFamily = Window.FontFamily, Background = Brushes.White };
+            var dialog = CreateThemedDialog("VS Code 實驗整合", 610);
+            dialog.Height = Math.Min(290, SystemParameters.WorkArea.Height - 40);
             var panel = new StackPanel { Margin = new Thickness(25) };
             panel.Children.Add(new TextBlock { Text = "VS Code 整合（實驗功能）", FontWeight = FontWeights.SemiBold, FontSize = 16 });
             panel.Children.Add(new TextBlock { Text = "安裝下方 VSIX，再於 VS Code 命令選單啟用。首次需正常重新載入對應視窗；整合會在確認閒置後暫停後端，透過視窗重載恢復。", TextWrapping = TextWrapping.Wrap, LineHeight = 22, Margin = new Thickness(0, 8, 0, 0) });
@@ -1034,10 +1078,13 @@ namespace CodexAccountSwitcher
         }
         private string Prompt(string title, string hint, string value)
         {
-            var dialog = new Window { Title = title, Width = 430, Height = 215, Owner = Window, WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize, Background = Brushes.White, FontFamily = Window.FontFamily };
+            var dialog = CreateThemedDialog(title, 430);
+            dialog.Height = 215;
             var panel = new StackPanel { Margin = new Thickness(24) };
-            panel.Children.Add(new TextBlock { Text = hint, Margin = new Thickness(0, 0, 0, 12), Foreground = Brushes.DimGray });
-            var input = new TextBox { Text = value, MaxLength = 60, FontSize = 16, Padding = new Thickness(8) }; panel.Children.Add(input);
+            panel.Children.Add(new TextBlock { Text = hint, Margin = new Thickness(0, 0, 0, 12), Foreground = RosterTheme.Muted });
+            var input = new TextBox { Text = value, MaxLength = 60, FontSize = 16, Padding = new Thickness(8),
+                Background = RosterTheme.Surface, Foreground = RosterTheme.Ink, BorderBrush = RosterTheme.SoftGold };
+            panel.Children.Add(input);
             var save = new Button { Content = "儲存", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 15, 0, 0), Padding = new Thickness(24, 7, 24, 7) };
             save.Click += delegate { dialog.DialogResult = true; }; panel.Children.Add(save); dialog.Content = panel;
             dialog.Loaded += delegate { input.Focus(); input.SelectAll(); };
