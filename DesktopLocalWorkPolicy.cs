@@ -27,6 +27,8 @@ namespace CodexAccountSwitcher
         internal const string November20ArchiveSha256 = "A538C8BFA0BF6A43B06C4C62AAD93616A78C4CAD306602CC05F528844A551598";
         private const long November21ArchiveLength = 443772048;
         private const string November21ArchiveSha256 = "2334574ABBF17086F34F60C228D2A32FC18DDB4044477771DB6763023299A871";
+        private const long November21StoreUpdateArchiveLength = 443800006;
+        private const string November21StoreUpdateArchiveSha256 = "8A437AAD94098770C1BF5FD5385C204E162B62C6D7917F688741D74E05BABE90";
         private const string UnsupportedVersion = "目前 Codex 桌面版本尚未通過 Local Work 封鎖相容性驗證。請先關閉 Local Work 封鎖選項，或更新切換器後再啟動受管桌面。";
 
         [StructLayout(LayoutKind.Sequential)]
@@ -54,6 +56,7 @@ namespace CodexAccountSwitcher
             if (length == CurrentArchiveLength) return CurrentArchiveSha256;
             if (length == November20ArchiveLength) return November20ArchiveSha256;
             if (length == November21ArchiveLength) return November21ArchiveSha256;
+            if (length == November21StoreUpdateArchiveLength) return November21StoreUpdateArchiveSha256;
             return null;
         }
 

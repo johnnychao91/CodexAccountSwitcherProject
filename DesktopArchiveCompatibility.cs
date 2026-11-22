@@ -20,6 +20,9 @@ namespace CodexAccountSwitcher
         private const string November21App = "AF4D57201946260D2754172BC660EFF80B5398EA146EF466126886CCD0CF2514";
         private const string November21Cli = "180CC98D8BE7B3EDC1D881875692444D8462CDC00A8209C6093BC499F0918D30";
         private const string November21Contents = "638E83CBB51AC11F198639BB88214E74CCD901635D25B507FB25498E549391D4";
+        private const string November21StoreUpdateApp = "21C2EAC7703B43611392234738F669A8AF23907585B231EBDE54CA3CB104CC82";
+        private const string November21StoreUpdateCli = "4069ACDD8D101830F63EA5E2775883BFECF8A152AE87EE1B0EF9F14204F850F9";
+        private const string November21StoreUpdateContents = "3FB5ED60A7E61CE656B6D2359151D2A981F4CE925518D4FD274AAED97258964E";
         private static readonly byte[] PngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
 
         internal static bool Matches(Stream archive, string archivePath, DesktopPackageTarget target, bool allowLocalWorkOnly)
@@ -27,7 +30,8 @@ namespace CodexAccountSwitcher
             if (String.IsNullOrEmpty(target.PackageFullName) || String.IsNullOrEmpty(target.CliExecutable))
                 return false;
             string app = FileDigest(target.AppExecutable);
-            if (app != ReviewedApp && app != November20App && !(allowLocalWorkOnly && app == November21App)) return false;
+            if (app != ReviewedApp && app != November20App &&
+                !(allowLocalWorkOnly && (app == November21App || app == November21StoreUpdateApp))) return false;
             string cli = FileDigest(target.CliExecutable);
             string expected = ExpectedContents(app, cli, allowLocalWorkOnly);
             return expected != null && Fingerprint(archive, archivePath + ".unpacked") == expected;
@@ -38,6 +42,7 @@ namespace CodexAccountSwitcher
             if (app == ReviewedApp && cli == ReviewedCli) return ReviewedContents;
             if (app == November20App && cli == November20Cli) return November20Contents;
             if (allowLocalWorkOnly && app == November21App && cli == November21Cli) return November21Contents;
+            if (allowLocalWorkOnly && app == November21StoreUpdateApp && cli == November21StoreUpdateCli) return November21StoreUpdateContents;
             return null;
         }
 

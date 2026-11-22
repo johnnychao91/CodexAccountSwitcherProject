@@ -60,7 +60,7 @@ namespace CodexAccountSwitcher
             if (waiting.Count == 1) ticket = waiting[0];
             else foreach (var pending in waiting) { store.MarkNeedsAttention(pending); uncertain++; }
             SetStatus(uncertain != 0 ? "有先前未完成的續聊記錄；不會自動重送，請檢查原對話。" : ticket != null ?
-                "原對話正在等待額度恢復；會重新確認帳號與對話後再續跑。" : "桌面自動續聊已準備就緒。");
+                "原對話正在等待額度恢復；會重新確認帳號與對話後再續跑。" : String.Empty);
         }
 
         private void SetStatus(string value)

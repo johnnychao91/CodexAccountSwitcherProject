@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 
 namespace CodexAccountSwitcher
 {
+    internal enum DesktopContinuationSupport { Unverified, Supported, LocalWorkOnly }
+
     internal static class DesktopContinuationCompatibility
     {
         internal const long LegacyArchiveLength = 640129388;
@@ -31,6 +33,22 @@ namespace CodexAccountSwitcher
         internal static void ValidateTarget(DesktopPackageTarget target)
         {
             DesktopLocalWorkPolicy.ValidateArchive(target, ExpectedDigest, UnsupportedVersion);
+        }
+        internal static DesktopContinuationSupport CheckTarget(DesktopPackageTarget target)
+        {
+            try
+            {
+                ValidateTarget(target);
+                return DesktopContinuationSupport.Supported;
+            }
+            catch (UserError) { }
+
+            try
+            {
+                DesktopLocalWorkPolicy.ValidateTarget(target);
+                return DesktopContinuationSupport.LocalWorkOnly;
+            }
+            catch (UserError) { return DesktopContinuationSupport.Unverified; }
         }
         private static string ExpectedDigest(long length)
         {

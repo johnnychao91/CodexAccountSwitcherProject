@@ -94,6 +94,27 @@ namespace CodexAccountSwitcher
                     DesktopArchiveCompatibility.ExpectedContents(app, cli) == null,
                     "A normalized Local Work-only archive incorrectly authorized continuation.");
             });
+            test("Package 4957 keeps Local Work protection independent from desktop continuation", delegate
+            {
+                const long length = 443800006;
+                const string hash = "8A437AAD94098770C1BF5FD5385C204E162B62C6D7917F688741D74E05BABE90";
+                var digest = Enumerable.Range(0, 32).Select(i => Convert.ToByte(hash.Substring(i * 2, 2), 16)).ToArray();
+                DesktopLocalWorkPolicy.ValidateArchiveDigest(length, digest);
+                Check(Rejected(() => DesktopContinuationCompatibility.ValidateArchiveDigest(length, digest)),
+                    "Package 4957 incorrectly authorized legacy continuation.");
+                digest[0] ^= 1;
+                Check(Rejected(() => DesktopLocalWorkPolicy.ValidateArchiveDigest(length, digest)), "An altered 4957 archive was accepted.");
+                const string app = "21C2EAC7703B43611392234738F669A8AF23907585B231EBDE54CA3CB104CC82";
+                const string cli = "4069ACDD8D101830F63EA5E2775883BFECF8A152AE87EE1B0EF9F14204F850F9";
+                const string previousCli = "180CC98D8BE7B3EDC1D881875692444D8462CDC00A8209C6093BC499F0918D30";
+                Check(DesktopArchiveCompatibility.ExpectedContents(app, cli, true) ==
+                    "3FB5ED60A7E61CE656B6D2359151D2A981F4CE925518D4FD274AAED97258964E" &&
+                    DesktopArchiveCompatibility.ExpectedContents(app, cli) == null &&
+                    DesktopArchiveCompatibility.ExpectedContents(app, previousCli, true) == null,
+                    "The normalized 4957 profile incorrectly accepted continuation or another CLI.");
+                Check(DesktopContinuationCompatibility.CheckTarget(null) == DesktopContinuationSupport.Unverified,
+                    "A missing package was treated as verified.");
+            });
             test("Desktop conversation IPC frames use little-endian UTF8 lengths and tolerate partial reads", delegate
             {
                 using (var bytes = new MemoryStream())

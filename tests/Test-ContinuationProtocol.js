@@ -13,7 +13,9 @@ const profiles = [
   { version: '26.1111.9664.0', length: 783725118, hash: 'a538c8bfa0bf6a43b06c4c62aad93616a78c4cad306602cc05f528844a551598',
     symbols: { override: 'MA', path: 'eJ', fs: 'rt', error: 'MX', options: 'M0', diagnostic: 'MY' } },
   { version: '26.1117.3838.0', length: 443772048, hash: '2334574abbf17086f34f60c228d2a32fc18ddb4044477771db6763023299a871',
-    localWorkOnly: true, symbols: { override: 'Ec', path: 'tp', fs: 'rF', error: 'EO', options: 'Ej', diagnostic: 'ED' } }
+    localWorkOnly: true, symbols: { override: 'Ec', path: 'tp', fs: 'rF', error: 'EO', options: 'Ej', diagnostic: 'ED' } },
+  { version: '26.1117.4957.0', length: 443800006, hash: '8a437aad94098770c1bf5fd5385c204e162b62c6d7917f688741d74e05babe90',
+    localWorkOnly: true, verifyPackedProtocolsAbsent: true, symbols: { override: 'Ec', path: 'tp', fs: 'rF', error: 'EO', options: 'Ej', diagnostic: 'ED' } }
 ];
 async function main() {
   if (!process.argv[2]) throw Error('Pass the reviewed app.asar path.');
@@ -31,7 +33,8 @@ async function main() {
     function walk(node, path = '') { for (const [name, item] of Object.entries(node.files || {})) {
       const p = path + name;
       if (item.files) walk(item, p + '/');
-      else if (p.startsWith('.vite/') && name.startsWith('early-bootstrap') && p.endsWith('.js') && !item.unpacked && item.size < 10000000) {
+      else if (!item.unpacked && p.endsWith('.js') && (profile.verifyPackedProtocolsAbsent ||
+        (p.startsWith('.vite/') && name.startsWith('early-bootstrap') && item.size < 10000000))) {
         const bytes = Buffer.alloc(item.size); assert.strictEqual(fs.readSync(fd, bytes, 0, bytes.length, 8 + size + Number(item.offset)), bytes.length); scripts.push(bytes.toString('utf8'));
       }
     } }
@@ -63,6 +66,9 @@ async function main() {
     }
     if (profile.localWorkOnly) {
       assert(!scripts.some(s => s.includes('case"thread-follower-interrupt-turn":try{')));
+      if (profile.verifyPackedProtocolsAbsent) for (const identifier of ['thread-owner-discovery', 'thread-follower-interrupt-turn', 'thread-follower-start-turn']) {
+        assert(!scripts.some(s => s.includes(identifier)), `Unexpected legacy protocol identifier: ${identifier}`);
+      }
       console.log(JSON.stringify({ passed: 3, reviewedPackage: profile.version, actualBundleDispatch: false,
         localWorkStartupVerified: true, syntheticOnly: true, appStarted: false }));
       return;

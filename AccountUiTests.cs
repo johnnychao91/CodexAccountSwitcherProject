@@ -114,19 +114,27 @@ namespace CodexAccountSwitcher
                 try
                 {
                     var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-                    var compatible = typeof(MainView).GetField("continuationCompatible", flags);
+                    var support = typeof(MainView).GetField("continuationSupport", flags);
                     var enabled = typeof(MainView).GetProperty("DesktopContinuationEnabled", flags);
+                    var update = typeof(MainView).GetMethod("UpdateButtons", flags);
                     string fixture = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N"));
                     typeof(MainView).GetField("runtimes", flags).SetValue(view, new RuntimeCoordinator(fixture, fixture));
                     Check(!(bool)enabled.GetValue(view, null));
-                    compatible.SetValue(view, true);
+                    support.SetValue(view, DesktopContinuationSupport.Supported);
                     Check((bool)enabled.GetValue(view, null));
-                    compatible.SetValue(view, false);
+                    support.SetValue(view, DesktopContinuationSupport.LocalWorkOnly);
                     Check(!(bool)enabled.GetValue(view, null));
-                    typeof(MainView).GetMethod("UpdateButtons", flags).Invoke(view, null);
+                    update.Invoke(view, null);
+                    Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("暫不支援桌面續跑"));
+                    Check(((TextBlock)view.Window.FindName("ContinuationStatusText")).Text.Contains("手動續跑"));
+                    Check(Button(view, "ContinueDesktopButton").Content.ToString() == "關閉自動續跑");
+                    support.SetValue(view, DesktopContinuationSupport.Unverified);
+                    Check(!(bool)enabled.GetValue(view, null));
+                    update.Invoke(view, null);
                     Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("版本未通過驗證，暫不執行"));
+                    Check(((TextBlock)view.Window.FindName("ContinuationStatusText")).Visibility == Visibility.Collapsed);
                     typeof(MainView).GetField("busy", flags).SetValue(view, true);
-                    typeof(MainView).GetMethod("UpdateButtons", flags).Invoke(view, null);
+                    update.Invoke(view, null);
                     Check(!Button(view, "ContinueDesktopButton").IsEnabled);
                     typeof(MainView).GetField("busy", flags).SetValue(view, false);
                 }

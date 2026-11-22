@@ -92,7 +92,8 @@ namespace CodexAccountSwitcher
         private bool demoDesktopControlRequested = true, desktopStateQuery, desktopAutoStartChecking;
         private bool desktopConnected;
         private bool demoContinueRequested = true;
-        private bool? continuationCompatible;
+        private DesktopContinuationSupport? continuationSupport;
+        private string continuationDetail;
         private int desktopConnectionRefreshTicks;
         private string desktopConnectionText = "尚未檢查連線";
         private T Element<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
@@ -226,7 +227,7 @@ namespace CodexAccountSwitcher
 
         private bool ContinuationRequested { get { return demo ? demoContinueRequested : vault != null && (vault.Data.AutoContinueDesktop ?? true); } }
         private bool DesktopContinuationEnabled
-        { get { return continuationCompatible == true && ContinuationRequested && runtimes != null && runtimes.Desktop.ControlRequested; } }
+        { get { return continuationSupport == DesktopContinuationSupport.Supported && ContinuationRequested && runtimes != null && runtimes.Desktop.ControlRequested; } }
         private async Task ToggleContinuation()
         {
             if (busy || manualOperation || automatic != null && automatic.IsRunning) return;
@@ -242,15 +243,16 @@ namespace CodexAccountSwitcher
         }
         private async Task RefreshContinuationCompatibility()
         {
-            bool supported = false;
-            try { supported = await Task.Run(delegate { DesktopContinuationCompatibility.ValidateTarget(DesktopPackageTarget.Resolve(Installation.DesktopExe())); return true; }); }
+            var support = DesktopContinuationSupport.Unverified;
+            try { support = await Task.Run(() => DesktopContinuationCompatibility.CheckTarget(DesktopPackageTarget.Resolve(Installation.DesktopExe()))); }
             catch { }
-            continuationCompatible = supported;
+            continuationSupport = support;
             UpdateContinuationButton();
-            if (!supported && continuation != null && continuation.WaitingForQuotaSourceId != null)
+            if (support != DesktopContinuationSupport.Supported && continuation != null && continuation.WaitingForQuotaSourceId != null)
             {
                 await continuation.CancelAsync();
-                Element<TextBlock>("ContinuationStatusText").Text = "Codex 版本未通過驗證，已取消這次額度等待；自動監看仍可依設定切換帳號。";
+                continuationDetail = "已取消這次續跑的額度等待。自動監看仍可依設定切換帳號。";
+                UpdateContinuationDetail();
             }
         }
         private void UpdateContinuationButton()
@@ -263,12 +265,24 @@ namespace CodexAccountSwitcher
             button.BorderBrush = new SolidColorBrush(Color.FromRgb(18, 119, 93));
             button.ToolTip = "記住此開關；不會立即送出訊息。需版本相容、自動監看及受管桌面連線。";
             var label = Element<TextBlock>("ContinuationModeText");
-            label.Text = !requested ? "自動續跑：已關閉" : continuationCompatible == false ?
-                "自動續跑：設定已開啟 · Codex 版本未通過驗證，暫不執行" : !continuationCompatible.HasValue ?
+            label.Text = !requested ? "自動續跑：已關閉" : continuationSupport == DesktopContinuationSupport.LocalWorkOnly ?
+                "自動續跑：設定已開啟 · 此版 Codex 暫不支援桌面續跑" : continuationSupport == DesktopContinuationSupport.Unverified ?
+                "自動續跑：設定已開啟 · Codex 版本未通過驗證，暫不執行" : !continuationSupport.HasValue ?
                 "自動續跑：設定已開啟 · 版本尚未確認" : !monitorRequested ?
                 "自動續跑：已開啟 · 等待開啟自動監看" : !desktopConnected ?
                 "自動續跑：已開啟 · 等待桌面連線" : "自動續跑：已開啟 · 等待額度觸發";
-            label.Foreground = new SolidColorBrush(requested && continuationCompatible != true ? Color.FromRgb(148, 97, 21) : Color.FromRgb(18, 119, 93));
+            label.Foreground = new SolidColorBrush(requested && continuationSupport != DesktopContinuationSupport.Supported ? Color.FromRgb(148, 97, 21) : Color.FromRgb(18, 119, 93));
+            UpdateContinuationDetail();
+        }
+
+        private void UpdateContinuationDetail()
+        {
+            var label = Element<TextBlock>("ContinuationStatusText");
+            string detail = continuationDetail;
+            if (String.IsNullOrEmpty(detail) && ContinuationRequested && continuationSupport == DesktopContinuationSupport.LocalWorkOnly)
+                detail = "自動監看仍可在桌面閒置後切換帳號。切換後請回原對話手動續跑。";
+            label.Text = detail ?? String.Empty;
+            label.Visibility = String.IsNullOrEmpty(detail) ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private DesktopContinuationWorkflow CreateContinuationWorkflow()
@@ -322,7 +336,7 @@ namespace CodexAccountSwitcher
                     throw failure;
                 },
                 Release = (checkpoint, operation, token) => runtimes.Desktop.CancelContinuationAsync(checkpoint, operation, token),
-                Status = text => Window.Dispatcher.Invoke(new Action(() => Element<TextBlock>("ContinuationStatusText").Text = text))
+                Status = text => Window.Dispatcher.Invoke(new Action(() => { continuationDetail = text; UpdateContinuationDetail(); }))
             });
         }
         private async Task WaitForContinuationPrerequisites(DesktopContinuationCheckpoint checkpoint, CancellationToken token)

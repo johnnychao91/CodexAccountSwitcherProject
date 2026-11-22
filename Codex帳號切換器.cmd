@@ -7,17 +7,17 @@ if not "%2"=="" goto invalid_arguments
 set "SWITCHER_BUILD_ONLY=1"
 
 :arguments_ready
-set "SWITCHER_APP=%~dp0dist-v1.6.15\CodexAccountSwitcher.exe"
+set "SWITCHER_APP=%~dp0dist-v1.6.16\CodexAccountSwitcher.exe"
 if not exist "%SWITCHER_APP%" goto build
 if not exist "%SWITCHER_APP%.config" goto build
-if not exist "%~dp0dist-v1.6.15\ManagedBridge.exe" goto build
-if not exist "%~dp0dist-v1.6.15\ManagedBridge.exe.config" goto build
-if not exist "%~dp0dist-v1.6.15\codex-account-switcher-vscode.vsix" goto build
-if not exist "%~dp0dist-v1.6.15\DesktopRuntimeHost.exe" goto build
-if not exist "%~dp0dist-v1.6.15\DesktopRuntimeHost.exe.config" goto build
-if not exist "%~dp0dist-v1.6.15\DesktopAppRelay.exe" goto build
-if not exist "%~dp0dist-v1.6.15\DesktopAppRelay.exe.config" goto build
-if not exist "%~dp0dist-v1.6.15\desktop-start.ps1" goto build
+if not exist "%~dp0dist-v1.6.16\ManagedBridge.exe" goto build
+if not exist "%~dp0dist-v1.6.16\ManagedBridge.exe.config" goto build
+if not exist "%~dp0dist-v1.6.16\codex-account-switcher-vscode.vsix" goto build
+if not exist "%~dp0dist-v1.6.16\DesktopRuntimeHost.exe" goto build
+if not exist "%~dp0dist-v1.6.16\DesktopRuntimeHost.exe.config" goto build
+if not exist "%~dp0dist-v1.6.16\DesktopAppRelay.exe" goto build
+if not exist "%~dp0dist-v1.6.16\DesktopAppRelay.exe.config" goto build
+if not exist "%~dp0dist-v1.6.16\desktop-start.ps1" goto build
 goto launch
 
 :build
