@@ -1,3 +1,4 @@
+param([string]$OutputRoot = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 if (-not [Environment]::Is64BitOperatingSystem) {
@@ -15,7 +16,7 @@ foreach ($assembly in @('PresentationFramework.dll', 'PresentationCore.dll', 'Wi
         throw "The .NET Framework WPF assembly $assembly was not found in $wpf. Install or repair .NET Framework 4.8."
     }
 }
-$release = Join-Path $projectRoot 'release\v1.6.19'
+$release = Join-Path $OutputRoot 'release\v1.6.19'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
@@ -41,7 +42,7 @@ $argsList += $testSources
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination "$app.config" -Force
-$testBin = Join-Path $projectRoot 'tests\bin'
+$testBin = Join-Path $OutputRoot 'tests\bin'
 New-Item -ItemType Directory -Force -Path $testBin | Out-Null
 Copy-Item -LiteralPath $app -Destination (Join-Path $testBin 'CodexAccountSwitcher.exe') -Force
 Copy-Item -LiteralPath "$app.config" -Destination (Join-Path $testBin 'CodexAccountSwitcher.exe.config') -Force
