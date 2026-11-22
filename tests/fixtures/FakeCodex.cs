@@ -8,6 +8,8 @@ class FakeCodex
     static void Main()
     {
         Console.InputEncoding = Encoding.UTF8; Console.OutputEncoding = new UTF8Encoding(false);
+        if (Environment.GetEnvironmentVariable("CODEX_HOME") != Environment.GetEnvironmentVariable("CODEX_SQLITE_HOME"))
+            Environment.Exit(5);
         var init = Json.Object(Console.ReadLine());
         if (Json.Str(init, "method") != "initialize") Environment.Exit(2);
         Console.WriteLine("{\"id\":1,\"result\":{}}");

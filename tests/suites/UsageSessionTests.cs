@@ -76,7 +76,7 @@ namespace CodexAccountSwitcher
                 Fixture(storage =>
                 {
                     var previous = new Dictionary<string, string>();
-                    string[] keys = { "CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID" };
+                    string[] keys = { "CODEX_HOME", "CODEX_SQLITE_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID" };
                     foreach (string key in keys) previous[key] = Environment.GetEnvironmentVariable(key);
                     string currentHome = Path.Combine(storage, "current-home");
                     Directory.CreateDirectory(currentHome);
@@ -88,6 +88,7 @@ namespace CodexAccountSwitcher
                     {
                         foreach (string key in keys) Environment.SetEnvironmentVariable(key, "synthetic-inherited-value");
                         Environment.SetEnvironmentVariable("CODEX_HOME", currentHome);
+                        Environment.SetEnvironmentVariable("CODEX_SQLITE_HOME", currentHome);
                         AccountUsage usage;
                         using (var session = new UsageSession())
                         using (var timeout = new CancellationTokenSource(10000))

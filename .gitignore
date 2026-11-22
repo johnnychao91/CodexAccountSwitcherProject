@@ -27,6 +27,7 @@ test-data-*/
 .codex-home/
 .codex-global-state.json*
 .codex-switcher-sidebar-backup/
+local-history-backups/
 CodexAccountSwitcher/
 login-*/
 usage-*/

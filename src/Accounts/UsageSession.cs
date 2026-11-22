@@ -81,7 +81,7 @@ namespace CodexAccountSwitcher
                         StandardErrorEncoding = Encoding.UTF8,
                         WorkingDirectory = folder
                     };
-                    start.EnvironmentVariables["CODEX_HOME"] = folder;
+                    LocalCodexSnapshot.IsolateHelper(start, folder);
                     start.EnvironmentVariables["RUST_LOG"] = "off";
                     foreach (string key in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID" })
                         start.EnvironmentVariables.Remove(key);

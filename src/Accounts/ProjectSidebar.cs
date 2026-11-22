@@ -47,7 +47,7 @@ namespace CodexAccountSwitcher
                     .Replace("-", "").ToLowerInvariant();
         }
 
-        internal static ProjectSidebar Prepare(string home, string oldAuth, string targetAuth)
+        internal static ProjectSidebar Prepare(string home, string oldAuth, string targetAuth, string sqliteHome = null)
         {
             string path = Path.Combine(home, FileName);
             if (oldAuth == null) return null;
@@ -77,9 +77,13 @@ namespace CodexAccountSwitcher
                 if (sourceProjects.Count == 0) return null;
                 var target = Globals(state, inactive, owner, targetKey);
                 string host = "local:" + Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-                using (var db = new SidebarDatabase(Path.Combine(home, "state_5.sqlite")))
+                string database = Path.Combine(sqliteHome ?? home, "state_5.sqlite");
+                var attributes = File.Exists(database) ? File.GetAttributes(database) : FileAttributes.Offline;
+                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0)
+                    throw InvalidState();
+                using (var db = new SidebarDatabase(database))
                 {
-                    if (!Merge(source, target, host, sourceProjects, db)) return null;
+                    if (!Merge(source, target, host, sourceProjects, db, home)) return null;
                 }
                 if (owner != targetKey && !inactive.ContainsKey(targetKey))
                     inactive.Add(targetKey, new Dictionary<string, object> { { "atoms", new Dictionary<string, object>() }, { "globals", target } });
@@ -145,7 +149,7 @@ namespace CodexAccountSwitcher
         }
 
         private static bool Merge(Dictionary<string, object> source, Dictionary<string, object> target,
-            string host, Dictionary<string, object> sourceProjects, SidebarDatabase db)
+            string host, Dictionary<string, object> sourceProjects, SidebarDatabase db, string home)
         {
             var sourceHosts = Map(source, Mappings);
             string sourceHost = HostKey(sourceHosts, host);
@@ -193,6 +197,7 @@ namespace CodexAccountSwitcher
 
             var assignments = Map(target, Assignments);
             var hosts = Map(target, Hosts);
+            var sourceMembershipHosts = Map(source, Hosts);
             var projectless = new HashSet<string>(Strings(target, Projectless), StringComparer.Ordinal);
             foreach (var item in Map(source, Assignments))
             {
@@ -200,8 +205,9 @@ namespace CodexAccountSwitcher
                 string id = Json.Str(assignment, "projectId");
                 if (Json.Str(assignment, "projectKind") != "local" || !sourceProjects.ContainsKey(id) ||
                     projectless.Contains(item.Key) || assignments.ContainsKey(item.Key) ||
+                    (sourceMembershipHosts.ContainsKey(item.Key) && Json.Str(sourceMembershipHosts, item.Key) != "local") ||
                     (hosts.ContainsKey(item.Key) && Json.Str(hosts, item.Key) != "local") ||
-                    !db.MatchesThread(item.Key, Json.Str(sourceMap, id))) continue;
+                    !db.MatchesThread(item.Key, Json.Str(sourceMap, id), home)) continue;
                 assignments.Add(item.Key, new Dictionary<string, object> { { "projectId", id }, { "projectKind", "local" } });
                 hosts[item.Key] = "local";
                 changed = true;
@@ -298,10 +304,12 @@ namespace CodexAccountSwitcher
                     .SequenceEqual(roots, StringComparer.OrdinalIgnoreCase);
         }
 
-        internal bool MatchesThread(string id, string project)
+        internal bool MatchesThread(string id, string project, string home)
         {
             string[] results = Query("SELECT project_id FROM threads WHERE id = ?1", id).ToArray();
-            return results.Length == 1 && (results[0] == null || results[0] == project);
+            if (results.Length != 1 || (results[0] != null && results[0] != project)) return false;
+            string[] rollouts = Query("SELECT rollout_path FROM threads WHERE id = ?1", id).ToArray();
+            return rollouts.Length == 1 && LocalCodexSnapshot.HasLiveRollout(home, rollouts[0]);
         }
 
         private IEnumerable<string> Query(string sql, string id)

@@ -27,6 +27,7 @@ class FakeUsageCodex
     {
         string home = Environment.GetEnvironmentVariable("CODEX_HOME");
         Require(!String.IsNullOrEmpty(home) && Directory.Exists(home));
+        Require(Environment.GetEnvironmentVariable("CODEX_SQLITE_HOME") == home);
         Require(Path.GetFileName(home).StartsWith("usage-", StringComparison.Ordinal));
         Require(String.Equals(Path.GetFullPath(home).TrimEnd(Path.DirectorySeparatorChar),
             Path.GetFullPath(Environment.CurrentDirectory).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));

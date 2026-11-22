@@ -253,6 +253,7 @@ namespace CodexAccountSwitcher
     public sealed class Vault
     {
         private readonly string path;
+        internal string DirectoryPath { get { return Path.GetDirectoryName(path); } }
         private string committed;
         private static readonly byte[] entropy = Encoding.UTF8.GetBytes("CodexAccountSwitcher/v1");
         public VaultData Data { get; private set; }
@@ -427,12 +428,14 @@ namespace CodexAccountSwitcher
                 vault.Upsert(old, null); vault.Save(); return;
             }
             if (!Directory.Exists(home)) throw new UserError("找不到 Codex 資料夾，請先啟動 Codex 並登入。");
-            var sidebar = ProjectSidebar.Prepare(home, old, targetRaw);
+            string sqliteHome = LocalCodexSnapshot.SqliteHome(home);
+            var sidebar = ProjectSidebar.Prepare(home, old, targetRaw, sqliteHome);
             Action confirmQuiet = delegate
             {
                 if (busy() || Files.ReadAuth(path) != old)
                     throw new UserError("登入狀態剛剛改變，已取消切換。請完全結束 Codex 後重試。");
             };
+            LocalCodexSnapshot.Save(home, sqliteHome, vault.DirectoryPath, confirmQuiet);
             if (old != null)
             {
                 // Keep a newly logged-in session when replacing the same user's old session.
@@ -466,7 +469,7 @@ namespace CodexAccountSwitcher
             var start = new ProcessStartInfo(cli, "app-server --stdio -c cli_auth_credentials_store=\"file\"")
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true,
                 RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = folder };
-            start.EnvironmentVariables["CODEX_HOME"] = folder;
+            LocalCodexSnapshot.IsolateHelper(start, folder);
             foreach (string key in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_FEDERATION_RULE_ID" }) start.EnvironmentVariables.Remove(key);
             try
             {
@@ -476,7 +479,7 @@ namespace CodexAccountSwitcher
                 process.BeginErrorReadLine();
                 using (cancellation.Register(Stop))
                 {
-                    Send(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "codex_account_switcher", title = "Codex Account Switcher", version = "1.0.0" } } });
+                Send(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "codex_account_switcher", title = "Codex Account Switcher", version = "1.0.0" } } });
                     bool started = false;
                     string loginId = null;
                     while (true)

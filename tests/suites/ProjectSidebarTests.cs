@@ -63,6 +63,21 @@ namespace CodexAccountSwitcher
                 Check(Json.Map(Json.Map(incoming, "globals"), ProjectSidebar.Projects).ContainsKey("legacy-first"));
             });
 
+            test("Verified local sidebar uses the explicitly configured SQLite directory", delegate
+            {
+                var f = new Fixture(root);
+                string custom = Path.Combine(f.Home, "custom DB");
+                Directory.CreateDirectory(custom);
+                File.Move(f.Database, Path.Combine(custom, "state_5.sqlite"));
+                File.WriteAllText(Path.Combine(f.Home, "config.toml"), "sqlite_home = 'custom DB' # local");
+                f.Save();
+                f.Apply();
+                var owners = Json.Map(Json.Object(File.ReadAllText(f.StatePath)), ProjectSidebar.Owners);
+                var incoming = Json.Map(Json.Map(owners, "inactive"), ProjectSidebar.OwnerKey(f.TargetAuth));
+                var assignments = Json.Map(Json.Map(incoming, "globals"), ProjectSidebar.Assignments);
+                Check(assignments.ContainsKey("existing-chat") && !assignments.ContainsKey("cloud-only") && !assignments.ContainsKey("remote-chat"));
+            });
+
             test("Project name, root, mapping and missing database conflicts leave credentials and sidebar untouched", delegate
             {
                 foreach (var scenario in new[] { "name", "root", "mapping", "missing" })
@@ -162,9 +177,14 @@ namespace CodexAccountSwitcher
                     { ProjectSidebar.Order, new[] { "legacy-first" } }, { ProjectSidebar.Pins, new[] { "legacy-first" } },
                     { ProjectSidebar.Assignments, new Map { { "existing-chat", Assignment("legacy-first") },
                         { "absent-chat", Assignment("legacy-first") }, { "conflicting-chat", Assignment("legacy-first") },
-                        { "projectless-chat", Assignment("legacy-first") } } },
+                        { "projectless-chat", Assignment("legacy-first") }, { "cloud-only", Assignment("legacy-first") },
+                        { "remote-chat", Assignment("legacy-first") } } },
+                    { ProjectSidebar.Hosts, new Map { { "remote-chat", "remote-fixture" } } },
                     { "source-only", "kept" }
                 };
+                string rollout = Path.Combine(Home, "sessions", "rollout-fixture.jsonl");
+                Directory.CreateDirectory(Path.GetDirectoryName(rollout));
+                File.WriteAllText(rollout, "{}");
                 IntPtr db;
                 Check(sqlite3_open_v2(Utf8(Database), out db, 6, IntPtr.Zero) == 0);
                 try
@@ -173,8 +193,10 @@ namespace CodexAccountSwitcher
                         "CREATE TABLE project_roots(project_id TEXT, position INTEGER, path TEXT);" +
                         "INSERT INTO project_roots VALUES ('db-first',0,'" + FirstRoot.Replace("'", "''") + "')," +
                         "('db-second',0,'" + FirstRoot.Replace("'", "''") + "');" +
-                        "CREATE TABLE threads(id TEXT, project_id TEXT);" +
-                        "INSERT INTO threads VALUES ('existing-chat','db-first'),('projectless-chat',NULL),('conflicting-chat','db-second');";
+                        "CREATE TABLE threads(id TEXT, project_id TEXT, rollout_path TEXT);" +
+                        "INSERT INTO threads VALUES ('existing-chat','db-first','" + rollout.Replace("'", "''") + "')," +
+                        "('remote-chat','db-first','" + rollout.Replace("'", "''") + "')," +
+                        "('projectless-chat',NULL,NULL),('conflicting-chat','db-second',NULL),('cloud-only','db-first',NULL);";
                     Check(sqlite3_exec(db, Utf8(sql), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero) == 0);
                 }
                 finally { sqlite3_close(db); }

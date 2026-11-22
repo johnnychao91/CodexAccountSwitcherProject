@@ -101,6 +101,7 @@ namespace CodexAccountSwitcher
             ProcessInspectorTests.Register(test);
             SwitchWorkflowTests.Register(test);
             ProjectSidebarTests.Register(test, root);
+            LocalCodexSnapshotTests.Register(test, root);
             UsageModelTests.Register(test);
             UsageSessionTests.Register(test);
             AccountOrderTests.Register(test);

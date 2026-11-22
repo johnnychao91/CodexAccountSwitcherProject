@@ -14,6 +14,7 @@ $files = @(
     'assets/codex-roster-transparent.png', 'assets/RosterIcon.ico',
     'tests/suites/ProcessInspectorTests.cs', 'README.md', 'tests/suites/SelfTests.cs', 'src/Accounts/SwitchWorkflow.cs',
     'src/Accounts/ProjectSidebar.cs', 'tests/suites/ProjectSidebarTests.cs',
+    'src/Accounts/LocalCodexSnapshot.cs', 'tests/suites/LocalCodexSnapshotTests.cs',
     'tests/suites/SwitchWorkflowTests.cs', 'tests/fixtures/FakeCodex.cs', 'tests/fixtures/LaunchProbe.cs',
     'tests/fixtures/ProcessProbe.cs', 'prepare-github.ps1', 'src/Accounts/UsageModels.cs', 'tests/suites/UsageModelTests.cs',
     'src/Accounts/UsageSession.cs', 'tests/suites/UsageSessionTests.cs', 'tests/fixtures/FakeUsageCodex.cs',

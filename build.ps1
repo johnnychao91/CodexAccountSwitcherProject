@@ -31,6 +31,7 @@ $accountSources = @('Core.cs', 'SwitchWorkflow.cs', 'UsageModels.cs', 'UsageSess
 $runtimeSources = @('ProcessInspector.cs', 'ManagedRuntimeClient.cs', 'ManagedBridge.cs') | ForEach-Object { Join-Path $projectRoot "src\Runtime\$_" }
 $desktopSources = @('DesktopNative.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopArchiveCompatibility.cs', 'DesktopWebSocket.cs', 'DesktopSession.cs', 'DesktopHostProgram.cs', 'ContinuationTicket.cs', 'ContinuationAdmission.cs', 'DesktopAppRelay.cs') | ForEach-Object { Join-Path $projectRoot "src\Desktop\$_" }
 $desktopSources += (Join-Path $projectRoot 'src\Accounts\ProjectSidebar.cs')
+$desktopSources += (Join-Path $projectRoot 'src\Accounts\LocalCodexSnapshot.cs')
 $appDesktopSources = @('DesktopLauncher.cs', 'DesktopRuntimeCoordinator.cs', 'DesktopAutoStart.cs', 'DesktopConversationClient.cs', 'DesktopContinuationWorkflow.cs') | ForEach-Object { Join-Path $projectRoot "src\Desktop\$_" }
 $testSources = @('SelfTests.cs', 'AccountOrderTests.cs', 'AccountUiTests.cs', 'ProcessInspectorTests.cs', 'SwitchWorkflowTests.cs', 'UsageModelTests.cs', 'UsageSessionTests.cs', 'AutoSwitchTests.cs', 'ManagedRuntimeClientTests.cs', 'ManagedBridgeTests.cs', 'ProjectSidebarTests.cs', 'QuotaResetTests.cs', 'QuotaResetIntegrationTests.cs', 'DesktopNativeTests.cs', 'DesktopLocalWorkPolicyTests.cs', 'DesktopWebSocketTests.cs', 'DesktopSessionTests.cs', 'DesktopAutoStartTests.cs', 'ContinuationTicketTests.cs', 'ContinuationAdmissionTests.cs', 'DesktopConversationClientTests.cs', 'DesktopContinuationWorkflowTests.cs', 'DesktopAppRelayTests.cs') | ForEach-Object { Join-Path $projectRoot "tests\suites\$_" }
 $argsList += $accountSources
@@ -39,6 +40,9 @@ $argsList += $desktopSources
 $argsList += $appDesktopSources
 $argsList += (Join-Path $projectRoot 'src\Roster\App.cs')
 $argsList += $testSources
+$argsList += (Join-Path $projectRoot 'tests\suites\LocalCodexSnapshotTests.cs')
+$archiveReference = '/reference:System.IO.Compression.dll'
+$argsList += $archiveReference
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination "$app.config" -Force
@@ -49,10 +53,10 @@ Copy-Item -LiteralPath "$app.config" -Destination (Join-Path $testBin 'CodexAcco
 & $compiler /nologo /target:exe /main:CodexAccountSwitcher.ManagedBridgeProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'ManagedBridge.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') (Join-Path $projectRoot 'src\Runtime\ManagedBridgeProgram.cs') (Join-Path $projectRoot 'src\Desktop\ContinuationAdmission.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Integration helper compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination (Join-Path $release 'ManagedBridge.exe.config') -Force
-& $compiler /nologo /target:winexe /main:CodexAccountSwitcher.DesktopHostProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'DesktopRuntimeHost.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll /reference:System.Management.dll /reference:System.Net.Http.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Accounts\Core.cs') (Join-Path $projectRoot 'src\Desktop\DesktopLauncher.cs') (Join-Path $projectRoot 'src\Runtime\ProcessInspector.cs') (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') @desktopSources
+& $compiler /nologo /target:winexe /main:CodexAccountSwitcher.DesktopHostProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'DesktopRuntimeHost.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll /reference:System.Management.dll /reference:System.Net.Http.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Accounts\Core.cs') (Join-Path $projectRoot 'src\Desktop\DesktopLauncher.cs') (Join-Path $projectRoot 'src\Runtime\ProcessInspector.cs') $archiveReference (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') @desktopSources
 if ($LASTEXITCODE -ne 0) { throw 'Desktop host compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination (Join-Path $release 'DesktopRuntimeHost.exe.config') -Force
-& $compiler /nologo /target:exe /main:CodexAccountSwitcher.DesktopAppRelayProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'DesktopAppRelay.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll /reference:System.Management.dll /reference:System.Net.Http.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Accounts\Core.cs') (Join-Path $projectRoot 'src\Desktop\DesktopLauncher.cs') (Join-Path $projectRoot 'src\Runtime\ProcessInspector.cs') (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') @desktopSources
+& $compiler /nologo /target:exe /main:CodexAccountSwitcher.DesktopAppRelayProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'DesktopAppRelay.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Xml.dll /reference:System.Management.dll /reference:System.Net.Http.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Accounts\Core.cs') (Join-Path $projectRoot 'src\Desktop\DesktopLauncher.cs') (Join-Path $projectRoot 'src\Runtime\ProcessInspector.cs') $archiveReference (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') @desktopSources
 if ($LASTEXITCODE -ne 0) { throw 'Desktop relay compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination (Join-Path $release 'DesktopAppRelay.exe.config') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Desktop\desktop-start.ps1') -Destination (Join-Path $release 'desktop-start.ps1') -Force
