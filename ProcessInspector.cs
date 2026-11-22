@@ -66,7 +66,7 @@ namespace CodexAccountSwitcher
                 IsName(snapshot.ParentName, "cursor", "windsurf", "devenv", "rider64", "rider", "idea64", "idea", "pycharm64", "pycharm", "webstorm64", "webstorm", "clion64", "clion", "studio64", "antigravity"))
             { kind = "OtherIde"; description = "其他 IDE 的 Codex 工作程序"; }
             else if (IsName(snapshot.Name, "chatgpt") || IsName(snapshot.ParentName, "chatgpt") ||
-                (Contains(path, "\\openai.codex_") && Contains(path, "\\app\\")) || Contains(path, "\\OpenAI" + "\\Codex" + "\\bin\\"))
+                Contains(path, "\\openai.codex_") || Contains(path, "\\OpenAI" + "\\Codex" + "\\bin\\"))
             { kind = "Desktop"; description = "ChatGPT / Codex 桌面程式或背景程序"; }
             else if (!String.IsNullOrWhiteSpace(path))
             { kind = "CLI"; description = "Codex CLI 或其他 Codex 工作程序"; }
@@ -150,15 +150,7 @@ namespace CodexAccountSwitcher
         }
 
         internal static bool IsCodexDesktop(string executable)
-        {
-            var directory = new DirectoryInfo(Path.GetDirectoryName(executable));
-            if (!String.Equals(directory.Name, "app", StringComparison.OrdinalIgnoreCase) || directory.Parent == null) return false;
-            var package = directory.Parent;
-            if (!package.Name.StartsWith("OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) ||
-                !package.Name.EndsWith("_2p2nqsd0c76g0", StringComparison.OrdinalIgnoreCase)) return false;
-            try { return String.Equals(DesktopNative.PackagePath(package.Name), package.FullName, StringComparison.OrdinalIgnoreCase); }
-            catch (UserError) { return false; }
-        }
+        { return DesktopLauncher.IsRegisteredExecutable(executable, DesktopNative.PackagePath); }
 
         internal static void DisposeIdentity(DesktopProcessIdentity identity)
         { if (identity.Lifetime != null) identity.Lifetime.Dispose(); }

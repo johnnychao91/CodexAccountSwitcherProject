@@ -79,17 +79,15 @@ namespace CodexAccountSwitcher
         {
             foreach (string package in packages.OrderByDescending(PackageVersion))
             {
-                string[] parts = (package ?? "").Split('_');
-                if (parts.Length != 5 || parts[0] != "OpenAI.Codex" || parts[4] != "2p2nqsd0c76g0") continue;
+                if (!IsCodexPackage(package)) continue;
                 string root;
                 try { root = packagePath(package); }
                 catch { continue; } // A Store update may remove one registration during lookup.
                 if (String.IsNullOrWhiteSpace(root)) continue;
-                foreach (string name in new[] { "ChatGPT.exe", "Codex.exe" })
+                foreach (string executable in DeclaredDesktopExecutables(root))
                 {
                     try
                     {
-                        string executable = Path.Combine(root, "app", name);
                         if (!File.Exists(executable)) continue;
                         var target = Resolve(executable);
                         if (target.AppUserModelId != null && target.AppUserModelId.StartsWith(CodexPackageFamily + "!", StringComparison.Ordinal))
@@ -99,6 +97,56 @@ namespace CodexAccountSwitcher
                 }
             }
             return null;
+        }
+
+        private static bool IsCodexPackage(string fullName)
+        {
+            string[] parts = (fullName ?? "").Split('_');
+            return parts.Length == 5 && String.Equals(parts[0] + "_" + parts[4], CodexPackageFamily, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static bool IsRegisteredExecutable(string executable, Func<string, string> packagePath)
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(executable) || !Path.IsPathRooted(executable) || !File.Exists(executable)) return false;
+                string full = Path.GetFullPath(executable);
+                var directory = new DirectoryInfo(Path.GetDirectoryName(full));
+                while (directory != null && !IsCodexPackage(directory.Name)) directory = directory.Parent;
+                if (directory == null || !String.Equals(Path.GetFullPath(packagePath(directory.Name)).TrimEnd('\\'),
+                    directory.FullName, StringComparison.OrdinalIgnoreCase)) return false;
+                return DeclaredDesktopExecutables(directory.FullName).Contains(full, StringComparer.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private static XmlNodeList ManifestApplications(string root)
+        {
+            var document = new XmlDocument { XmlResolver = null };
+            using (var reader = XmlReader.Create(Path.Combine(root, "AppxManifest.xml"), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) document.Load(reader);
+            return document.GetElementsByTagName("Application", document.DocumentElement.NamespaceURI);
+        }
+
+        private static IEnumerable<string> DeclaredDesktopExecutables(string root)
+        {
+            var candidates = new List<string>();
+            try
+            {
+                string fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                foreach (XmlElement app in ManifestApplications(root))
+                {
+                    if (String.IsNullOrWhiteSpace(app.GetAttribute("Id"))) continue;
+                    string relative = app.GetAttribute("Executable").Replace('/', Path.DirectorySeparatorChar);
+                    string[] segments = relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+                    if (segments.Any(segment => String.Equals(segment, "resources", StringComparison.OrdinalIgnoreCase))) continue;
+                    string name = Path.GetFileName(relative);
+                    if (!String.Equals(name, "ChatGPT.exe", StringComparison.OrdinalIgnoreCase) && !String.Equals(name, "Codex.exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    string executable = Path.GetFullPath(Path.Combine(fullRoot, relative));
+                    if (executable.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase)) candidates.Add(executable);
+                }
+            }
+            catch { /* An unreadable or malformed registration must not hide another package. */ }
+            return candidates;
         }
 
         [ComImport, Guid("2E941141-7F97-4756-BA1D-9DECDE894A3D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -127,9 +175,7 @@ namespace CodexAccountSwitcher
                 {
                     // Match the executable to its manifest Application. A package may contain
                     // several applications, so using the first Id can activate a helper instead.
-                    var document = new XmlDocument { XmlResolver = null };
-                    using (var reader = XmlReader.Create(manifestPath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) document.Load(reader);
-                    foreach (XmlElement app in document.GetElementsByTagName("Application", document.DocumentElement.NamespaceURI))
+                    foreach (XmlElement app in ManifestApplications(directory.FullName))
                     {
                         string relative = app.GetAttribute("Executable").Replace('/', Path.DirectorySeparatorChar);
                         if (String.IsNullOrEmpty(relative)) continue;

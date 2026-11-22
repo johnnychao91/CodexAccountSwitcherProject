@@ -320,37 +320,59 @@ namespace CodexAccountSwitcher
         public static List<Process> Running()
         {
             // A separate CLI can also refresh shared credentials, so wait for it too.
-            int session = Process.GetCurrentProcess().SessionId;
-            return Process.GetProcesses().Where(p =>
+            int session;
+            using (var current = Process.GetCurrentProcess()) session = current.SessionId;
+            var running = new List<Process>();
+            foreach (var process in Process.GetProcesses())
             {
-                try { return p.SessionId == session && (p.ProcessName.Equals("codex", StringComparison.OrdinalIgnoreCase) || p.ProcessName.Equals("chatgpt", StringComparison.OrdinalIgnoreCase)); }
-                catch { return false; }
-            }).ToList();
+                try
+                {
+                    if (process.SessionId == session && (process.ProcessName.Equals("codex", StringComparison.OrdinalIgnoreCase) ||
+                        process.ProcessName.Equals("chatgpt", StringComparison.OrdinalIgnoreCase)))
+                    { running.Add(process); continue; }
+                }
+                catch { }
+                process.Dispose();
+            }
+            return running;
         }
         public static bool IsRunning() { return ProcessInspector.Inspect().Count > 0; }
         public static string DesktopExe()
         {
-            foreach (var p in Running())
+            string runningPackage = null, unpackaged = null;
+            foreach (var process in Running())
             {
-                try
+                using (process)
                 {
-                    string path = p.MainModule.FileName;
-                    if ((p.ProcessName.Equals("ChatGPT", StringComparison.OrdinalIgnoreCase) ||
-                         path.IndexOf("WindowsApps", StringComparison.OrdinalIgnoreCase) >= 0) && !path.Contains("resources")) return path;
+                    if (runningPackage != null) continue;
+                    var identity = DesktopNative.ReadStandaloneIdentity(process.Id);
+                    if (identity == null) continue;
+                    try
+                    {
+                        string path = identity.ExecutablePath;
+                        if (ProcessInspector.IsCodexDesktop(path)) runningPackage = path;
+                        else if (unpackaged == null && String.Equals(Path.GetFileName(path), "ChatGPT.exe", StringComparison.OrdinalIgnoreCase) &&
+                            DesktopLauncher.Resolve(path).AppUserModelId == null) unpackaged = path;
+                    }
+                    catch { }
+                    finally { ProcessInspector.DisposeIdentity(identity); }
                 }
-                catch { }
-                finally { p.Dispose(); }
             }
-            try { return DesktopLauncher.InstalledExecutable(); }
-            catch { }
-            return null;
+            if (runningPackage != null) return runningPackage;
+            try { return DesktopLauncher.InstalledExecutable() ?? unpackaged; }
+            catch { return unpackaged; }
         }
         public static string CliExe()
         {
             string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenAI", "Codex", "bin");
-            if (Directory.Exists(root))
-                foreach (string folder in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
-                { string path = Path.Combine(folder, "codex.exe"); if (File.Exists(path)) return path; }
+            try
+            {
+                if (Directory.Exists(root))
+                    foreach (string folder in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
+                    { string path = Path.Combine(folder, "codex.exe"); if (File.Exists(path)) return path; }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
             string desktop = DesktopExe();
             if (desktop != null)
             { string path = Path.Combine(Path.GetDirectoryName(desktop), "resources", "codex.exe"); if (File.Exists(path)) return path; }

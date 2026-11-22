@@ -180,6 +180,29 @@ namespace CodexAccountSwitcher
                 File.WriteAllText(Path.Combine(folder, "app", "ChatGPT.exe"), "obsolete-branding-test-only");
                 Check(DesktopLauncher.InstalledExecutable(new[] { fullName }, name => folder) == Path.Combine(folder, "app", "Codex.exe"));
             });
+            test("Registered app discovery follows the manifest to an alternate desktop location", delegate
+            {
+                string fullName = "OpenAI.Codex_1.0.0.20_x64__2p2nqsd0c76g0";
+                string folder = Path.Combine(root, "alternate location", fullName);
+                string exe = Path.Combine(folder, "desktop", "Codex.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(exe)); File.WriteAllText(exe, "test-only");
+                File.WriteAllText(Path.Combine(folder, "AppxManifest.xml"), "<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\"><Applications><Application Id=\"App\" Executable=\"desktop/Codex.exe\"/></Applications></Package>");
+                Check(DesktopLauncher.InstalledExecutable(new[] { fullName }, name => folder) == exe);
+                Check(DesktopLauncher.IsRegisteredExecutable(exe, name => { Check(name == fullName); return folder; }));
+                Check(!DesktopLauncher.IsRegisteredExecutable(exe, name => Path.GetDirectoryName(folder)));
+                Check(ProcessInspector.Classify(new ProcessSnapshot { Name = "Codex.exe", ExecutablePath = exe }).Kind == "Desktop");
+            });
+            test("Registered app discovery excludes CLI resources and paths outside the package", delegate
+            {
+                string fullName = "OpenAI.Codex_1.0.0.21_x64__2p2nqsd0c76g0";
+                string folder = Path.Combine(root, "unsafe locations", fullName);
+                string resource = Path.Combine(folder, "app", "resources", "codex.exe");
+                Directory.CreateDirectory(Path.GetDirectoryName(resource)); File.WriteAllText(resource, "test-only");
+                File.WriteAllText(Path.Combine(folder, "AppxManifest.xml"), "<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\"><Applications><Application Id=\"Cli\" Executable=\"app/resources/codex.exe\"/><Application Id=\"Outside\" Executable=\"../Codex.exe\"/></Applications></Package>");
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(folder), "Codex.exe"), "test-only");
+                Check(DesktopLauncher.InstalledExecutable(new[] { fullName }, name => folder) == null);
+                Check(!DesktopLauncher.IsRegisteredExecutable(resource, name => folder));
+            });
             test("Registered app discovery selects the newest numeric package version", delegate
             {
                 string older = "OpenAI.Codex_1.0.0.9_x64__2p2nqsd0c76g0", newer = "OpenAI.Codex_1.0.0.10_x64__2p2nqsd0c76g0";
