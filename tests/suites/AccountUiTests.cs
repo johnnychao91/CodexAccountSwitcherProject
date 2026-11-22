@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Reflection;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -60,74 +59,20 @@ namespace CodexAccountSwitcher
                 }
                 finally { view.Window.Close(); }
             });
-            test("Stop all Codex processes is always visible next to Open App and disabled in demo mode", delegate
+            test("Roster consolidates updates and keeps advanced controls collapsed by default", delegate
             {
                 var view = new MainView(true);
                 try
                 {
-                    var stop = Button(view, "StopCodexButton");
-                    var open = Button(view, "OpenAppButton");
-                    var toolbar = (Panel)stop.Parent;
-                    Check(stop.Visibility == Visibility.Visible && !stop.IsEnabled);
-                    Check(toolbar.Children.IndexOf(open) == toolbar.Children.IndexOf(stop) + 1);
+                    var advanced = (Expander)view.Window.FindName("AdvancedOptions");
+                    Check(!advanced.IsExpanded);
+                    Check(view.Window.FindName("StopCodexButton") == null && view.Window.FindName("RefreshButton") == null);
+                    Check(Button(view, "UsageButton").IsEnabled && Button(view, "OpenAppButton") != null);
+                    Check(Button(view, "DesktopControlButton").Content.ToString() == "桌面控制…");
+                    advanced.IsExpanded = true;
+                    Check(Button(view, "ContinueDesktopButton") != null && Button(view, "IntegrationButton") != null);
                 }
                 finally { view.Window.Close(); }
-            });
-            test("Stop all Codex processes remains available during a manual switch wait", delegate
-            {
-                var view = new MainView(false);
-                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-                var busy = typeof(MainView).GetField("busy", flags);
-                var manual = typeof(MainView).GetField("manualOperation", flags);
-                var stopping = typeof(MainView).GetField("stoppingCodexProcesses", flags);
-                var update = typeof(MainView).GetMethod("UpdateButtons", flags);
-                try
-                {
-                    busy.SetValue(view, true);
-                    manual.SetValue(view, true);
-                    update.Invoke(view, null);
-                    Check(Button(view, "StopCodexButton").IsEnabled && Button(view, "CancelButton").IsEnabled);
-                    Check(!Button(view, "SwitchButton").IsEnabled && !Button(view, "OpenAppButton").IsEnabled);
-                    stopping.SetValue(view, true);
-                    update.Invoke(view, null);
-                    Check(!Button(view, "StopCodexButton").IsEnabled);
-                }
-                finally
-                {
-                    busy.SetValue(view, false);
-                    manual.SetValue(view, false);
-                    stopping.SetValue(view, false);
-                    view.Window.Close();
-                }
-            });
-            test("Confirmed Codex stop cancels the pending operation and waits for its cleanup", delegate
-            {
-                var view = new MainView(true);
-                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-                var manual = typeof(MainView).GetField("manualOperation", flags);
-                var cleanup = new TaskCompletionSource<bool>();
-                var context = SynchronizationContext.Current;
-                using (var pending = new CancellationTokenSource())
-                {
-                    try
-                    {
-                        manual.SetValue(view, true);
-                        typeof(MainView).GetField("manualOperationTask", flags).SetValue(view, cleanup.Task);
-                        typeof(MainView).GetField("cancellation", flags).SetValue(view, pending);
-                        SynchronizationContext.SetSynchronizationContext(null);
-                        var ready = (Task)typeof(MainView).GetMethod("WaitForOperationsBeforeCodexStop", flags).Invoke(view, null);
-                        Check(pending.IsCancellationRequested && !ready.IsCompleted);
-                        cleanup.SetResult(true);
-                        Check(ready.Wait(1000));
-                    }
-                    finally
-                    {
-                        cleanup.TrySetResult(true);
-                        SynchronizationContext.SetSynchronizationContext(context);
-                        manual.SetValue(view, false);
-                        view.Window.Close();
-                    }
-                }
             });
             test("Automatic continuation button toggles its preference without sending or changing the selected account", delegate
             {
@@ -208,10 +153,10 @@ namespace CodexAccountSwitcher
                     update.Invoke(view, null);
                     Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("暫不支援桌面續跑"));
                     var detail = (TextBlock)view.Window.FindName("ContinuationStatusText");
-                    Check(detail.Text.Contains("手動續跑") && !detail.Text.Contains("自動監看"));
+                    Check(detail.Visibility == Visibility.Collapsed);
                     typeof(MainView).GetField("monitorRequested", flags).SetValue(view, true);
                     update.Invoke(view, null);
-                    Check(detail.Text.Contains("自動監看") && detail.Text.Contains("手動續跑"));
+                    Check(detail.Visibility == Visibility.Visible && detail.Text.Contains("手動續跑"));
                     Check(Button(view, "ContinueDesktopButton").Content.ToString() == "關閉自動續跑");
                     support.SetValue(view, DesktopContinuationSupport.Unverified);
                     Check(!(bool)enabled.GetValue(view, null));

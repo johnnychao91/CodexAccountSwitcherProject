@@ -36,7 +36,7 @@ namespace CodexAccountSwitcher
                 }
                 Console.InputEncoding = new UTF8Encoding(false); Console.OutputEncoding = new UTF8Encoding(false);
                 using (var bridge = new ManagedBridge(new ManagedBridgeOptions { BackendExecutable = backend, BackendArguments = args,
-                    HelperExecutable = executable, ControllerExecutable = Path.Combine(Path.GetDirectoryName(executable), "CodexAccountSwitcher.exe"),
+                    HelperExecutable = executable, ControllerExecutable = Path.Combine(Path.GetDirectoryName(executable), "CodexRoster.exe"),
                     AuthorizationFile = configPath, AuthorizationGeneration = Text(config, "AuthorizationGeneration") }, Console.In, Console.Out))
                 { bridge.Run(); return bridge.ExitCode; }
             }

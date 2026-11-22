@@ -14,6 +14,70 @@ namespace CodexAccountSwitcher
 
     internal static class DesktopAutoStart
     {
+        // Select only an independently running App whose entire blocker inventory is
+        // attributable to its verified process tree. Failure to prove this is a veto.
+        internal static DesktopProcessIdentity FindUnmanagedApp(IList<DesktopSessionState> states,
+            IList<ProcessBlocker> blockers, IList<DesktopProcessIdentity> actors, string executable, int sessionId,
+            Func<DesktopProcessIdentity, bool> live, Func<DesktopProcessIdentity, bool> hasWindow)
+        {
+            if (states == null || blockers == null || actors == null || live == null || hasWindow == null ||
+                sessionId < 0 || String.IsNullOrWhiteSpace(executable) || !System.IO.Path.IsPathRooted(executable)) return null;
+            try
+            {
+                string target = System.IO.Path.GetFullPath(executable);
+                var sessions = states.ToArray(); var candidates = blockers.ToArray(); var snapshot = actors.ToArray();
+                if (sessions.Any(s => s == null || s.Host == null || s.Host.Pid <= 0 || (s.App != null && s.App.Pid <= 0) || s.OwnedActors == null ||
+                    s.OwnedActors.Any(a => a == null || a.Pid <= 0)) ||
+                    candidates.Any(b => b == null || b.Pid <= 0 || b.Kind != "Desktop") ||
+                    candidates.Select(b => b.Pid).Distinct().Count() != candidates.Length ||
+                    snapshot.Any(a => a == null || a.Pid <= 0) || snapshot.Select(a => a.Pid).Distinct().Count() != snapshot.Length)
+                    return null;
+                if (sessions.Any(s => live(s.Host) || (s.App != null && live(s.App)) || s.OwnedActors.Any(live))) return null;
+                var byPid = snapshot.ToDictionary(a => a.Pid);
+                var verified = new List<DesktopProcessIdentity>();
+                foreach (var blocker in candidates)
+                {
+                    DesktopProcessIdentity actor; DateTimeOffset started; DateTime creation;
+                    if (!byPid.TryGetValue(blocker.Pid, out actor) || actor.SessionId != sessionId ||
+                        String.IsNullOrWhiteSpace(actor.ExecutablePath) ||
+                        !DateTimeOffset.TryParse(actor.StartedUtc, System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.RoundtripKind, out started) ||
+                        String.IsNullOrWhiteSpace(blocker.CreationTime)) return null;
+                    try { creation = System.Management.ManagementDateTimeConverter.ToDateTime(blocker.CreationTime).ToUniversalTime(); }
+                    catch { return null; }
+                    if (creation.Ticks / 10 != started.UtcDateTime.Ticks / 10 || !live(actor)) return null;
+                    verified.Add(actor);
+                }
+                var apps = verified.Where(a => String.Equals(System.IO.Path.GetFullPath(a.ExecutablePath), target,
+                    StringComparison.OrdinalIgnoreCase) && hasWindow(a)).ToArray();
+                if (apps.Length != 1) return null;
+                var app = apps[0];
+                foreach (var actor in verified)
+                {
+                    if (actor.Pid == app.Pid) continue;
+                    var current = actor; var seen = new HashSet<int>();
+                    while (current.Pid != app.Pid)
+                    {
+                        if (!seen.Add(current.Pid) || seen.Count > 32 || current.ParentPid <= 0) return null;
+                        DesktopProcessIdentity parent;
+                        if (current.ParentIdentity != null && current.ParentIdentity.Pid == current.ParentPid)
+                            parent = current.ParentIdentity;
+                        else if (!byPid.TryGetValue(current.ParentPid, out parent)) return null;
+                        DateTimeOffset childBorn, parentBorn;
+                        if (parent.SessionId != sessionId || !live(parent) ||
+                            !DateTimeOffset.TryParse(current.StartedUtc, System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.RoundtripKind, out childBorn) ||
+                            !DateTimeOffset.TryParse(parent.StartedUtc, System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.RoundtripKind, out parentBorn) || childBorn < parentBorn) return null;
+                        if (parent.Pid == app.Pid && !DesktopNative.Equal(parent, app)) return null;
+                        current = parent;
+                    }
+                }
+                return app;
+            }
+            catch { return null; }
+        }
+
         // This decides whether startup should request an ordinary guarded launch.
         // Connected is connection information, never permission to stop a chat or
         // apply credentials. Those operations retain their existing fresh gates.

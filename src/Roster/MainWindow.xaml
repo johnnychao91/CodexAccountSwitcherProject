@@ -1,4 +1,4 @@
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:roster="clr-namespace:CodexAccountSwitcher;assembly=CodexAccountSwitcher" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" Title="Codex Roster" Width="1120" Height="1160" MinWidth="1040" MinHeight="710" WindowStartupLocation="CenterScreen" Background="{x:Static roster:RosterTheme.Cream}" FontFamily="Microsoft JhengHei UI, Segoe UI" FontSize="14" Foreground="{x:Static roster:RosterTheme.Ink}">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:roster="clr-namespace:CodexAccountSwitcher;assembly=CodexRoster" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" Title="Codex Roster" Width="1120" Height="1160" MinWidth="1040" MinHeight="710" WindowStartupLocation="CenterScreen" Background="{x:Static roster:RosterTheme.Cream}" FontFamily="Microsoft JhengHei UI, Segoe UI" FontSize="14" Foreground="{x:Static roster:RosterTheme.Ink}">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="34" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="10" UseAeroCaptionButtons="False"/>
   </shell:WindowChrome.WindowChrome>
@@ -105,15 +105,15 @@
           <TextBlock Text="只在這台電腦保存" Foreground="{x:Static roster:RosterTheme.Primary}" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="{x:Static roster:RosterTheme.Gold}" Margin="0,21,0,16"/>
-          <TextBlock Text="獨立工具 · v1.6.20&#10;適用 Windows 桌面版" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11" LineHeight="19"/>
+          <TextBlock Text="v1.6.21" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11"/>
         </StackPanel>
       </Grid>
     </Border>
     <Grid Grid.Row="1" Grid.Column="1" Margin="32,31,32,25">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-      <Grid Margin="0,0,0,23">
+      <Grid Margin="0,0,0,18">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel><TextBlock Text="讓帳號切換更簡單" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="手動安排優先順序，依剩餘額度選擇帳號。" Foreground="{x:Static roster:RosterTheme.Muted}" Margin="0,7,0,0"/></StackPanel>
+        <TextBlock Text="帳號管理" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center"/>
         <Button x:Name="AddButton" Grid.Column="1" Content="＋ 新增帳號" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12,0,0,0" Background="{x:Static roster:RosterTheme.Primary}" Foreground="White" BorderBrush="{x:Static roster:RosterTheme.Primary}"/>
       </Grid>
       <Border Grid.Row="1" Background="{x:Static roster:RosterTheme.Surface}" BorderBrush="{x:Static roster:RosterTheme.SoftGold}" BorderThickness="1" CornerRadius="14" Padding="23,19" Margin="0,0,0,24">
@@ -130,10 +130,9 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <TextBlock Text="已儲存帳號" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-          <Button x:Name="UsageButton" Content="更新全部額度" Padding="11,7" Margin="0,0,8,0"/>
+          <Button x:Name="UsageButton" Content="更新帳號與額度" Padding="11,7" Margin="0,0,8,0"/>
           <Button x:Name="RenameButton" Content="重新命名" Padding="11,7" Margin="0,0,8,0"/>
-          <Button x:Name="RemoveButton" Content="移除" Padding="11,7" Margin="0,0,8,0"/>
-          <Button x:Name="RefreshButton" Content="重新整理" Padding="11,7"/>
+          <Button x:Name="RemoveButton" Content="移除" Padding="11,7"/>
         </StackPanel>
         <Grid Grid.Row="1" Margin="0,12,0,0">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -192,38 +191,43 @@
       </Grid>
       <Border Grid.Row="4" Background="{x:Static roster:RosterTheme.Mist}" CornerRadius="10" Padding="16,13" Margin="0,16,0,18">
         <StackPanel>
-          <Grid Margin="0,0,0,9">
+          <Grid Margin="0,0,0,5">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <CheckBox x:Name="MonitorCheck" Content="自動監看並切換（每 60 秒）" VerticalAlignment="Center" HorizontalAlignment="Left" FontWeight="SemiBold"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-              <Button x:Name="RuntimeButton" Content="檢查工作狀態" Padding="10,6" Margin="0,0,8,0"/>
-              <Button x:Name="DesktopControlButton" Content="桌面控制：讀取中…" Padding="10,6" Margin="0,0,8,0" FontWeight="SemiBold"/>
-              <Button x:Name="IntegrationButton" Content="VS Code 整合…" Padding="10,6"/>
-            </StackPanel>
-          </Grid>
-          <CheckBox x:Name="InterruptCheck" Content="自動監看切換時允許正常中止回合（僅限已整合的 VS Code）" FontSize="12" Margin="0,0,0,6"/>
-          <Grid Margin="0,0,0,6">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Button x:Name="ContinueDesktopButton" Content="開啟自動續跑" Padding="12,7" FontWeight="SemiBold" Margin="0,0,12,0"/>
-            <TextBlock x:Name="ContinuationModeText" Grid.Column="1" Text="正在讀取自動續跑設定…" VerticalAlignment="Center" TextWrapping="Wrap" FontSize="12" FontWeight="SemiBold"/>
+            <CheckBox x:Name="MonitorCheck" Content="自動切換帳號" ToolTip="每 60 秒查詢額度" VerticalAlignment="Center" HorizontalAlignment="Left" FontWeight="SemiBold"/>
+            <Button x:Name="DesktopControlButton" Grid.Column="1" Content="桌面控制…" Padding="10,6"/>
           </Grid>
           <TextBlock x:Name="ContinuationStatusText" Visibility="Collapsed" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,6"/>
-          <TextBlock x:Name="AutoStatus" Text="自動監看已關閉。可在「桌面控制」管理受管桌面。" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"/>
-          <TextBlock x:Name="DesktopControlStatusText" Text="正在讀取桌面控制設定…" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>
-          <Border Height="1" Background="{x:Static roster:RosterTheme.SoftGold}" Margin="0,0,0,8"/>
+          <TextBlock x:Name="AutoStatus" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" TextWrapping="Wrap">
+            <TextBlock.Style><Style TargetType="TextBlock">
+              <Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger></Style.Triggers>
+            </Style></TextBlock.Style>
+          </TextBlock>
           <TextBlock x:Name="StatusText" Text="準備就緒。選擇帳號後即可切換。" TextWrapping="Wrap" Foreground="{x:Static roster:RosterTheme.Ink}" LineHeight="22"/>
           <StackPanel Orientation="Horizontal" Margin="0,6,0,0" x:Name="ProgressActions" Visibility="Collapsed">
             <Button x:Name="CancelButton" Content="取消" Padding="12,6"/>
             <Button x:Name="BrowserButton" Content="重新開啟登入網頁" Padding="12,6" Margin="8,0,0,0" Visibility="Collapsed"/>
           </StackPanel>
+          <Expander x:Name="AdvancedOptions" Header="進階選項" Foreground="{x:Static roster:RosterTheme.Primary}" FontSize="12" Margin="0,8,0,0">
+            <StackPanel Margin="0,8,0,0">
+              <Grid Margin="0,0,0,9">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Button x:Name="ContinueDesktopButton" Content="開啟自動續跑" Padding="10,6" Margin="0,0,10,0"/>
+                <TextBlock x:Name="ContinuationModeText" Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"/>
+              </Grid>
+              <CheckBox x:Name="InterruptCheck" Content="切換時允許正常中止 VS Code 的 Codex 回合" ToolTip="僅限已整合的 VS Code" Margin="0,0,0,9"/>
+              <StackPanel Orientation="Horizontal">
+                <Button x:Name="RuntimeButton" Content="檢查工作狀態" Padding="10,6" Margin="0,0,8,0"/>
+                <Button x:Name="IntegrationButton" Content="VS Code 整合…" Padding="10,6"/>
+              </StackPanel>
+            </StackPanel>
+          </Expander>
         </StackPanel>
       </Border>
       <Grid Grid.Row="5">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0"><TextBlock Text="手動切換：閒置後自動關閉受管程式" FontSize="12" Foreground="{x:Static roster:RosterTheme.Muted}" TextWrapping="Wrap"/><TextBlock Text="未連線時按「開啟 Codex App」；既有 App 請正常 Quit。" FontSize="11" Foreground="{x:Static roster:RosterTheme.Muted}" Margin="0,5,0,0" TextWrapping="Wrap"/></StackPanel>
+        <TextBlock x:Name="DesktopControlStatusText" Text="正在檢查桌面連線…" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,14,0"/>
         <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-          <Button x:Name="StopCodexButton" Content="中止所有 Codex 程序" Margin="0,0,8,0" BorderBrush="{x:Static roster:RosterTheme.Warning}" Foreground="{x:Static roster:RosterTheme.Warning}" ToolTip="先正常關閉 Codex 桌面，再清理殘留的 Codex 程序"/>
-          <Button x:Name="OpenAppButton" Content="開啟 Codex App" Margin="0,0,2,0"/>
+          <Button x:Name="OpenAppButton" Content="開啟 Codex" Margin="0,0,2,0"/>
           <Button x:Name="RestoreButton" Content="切回上一個" Margin="8,0,10,0"/>
           <Button x:Name="SwitchButton" Content="切換並開啟 Codex  →" Background="{x:Static roster:RosterTheme.Primary}" BorderBrush="{x:Static roster:RosterTheme.Primary}" Foreground="White"/>
         </StackPanel>

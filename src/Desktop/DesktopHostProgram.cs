@@ -408,7 +408,7 @@ namespace CodexAccountSwitcher
             string ownExe; using (var own = Process.GetCurrentProcess()) ownExe = own.MainModule.FileName;
             if (!String.Equals(Path.GetFullPath(value.HostExecutable), ownExe, StringComparison.OrdinalIgnoreCase) ||
                 !String.Equals(Path.GetDirectoryName(Path.GetFullPath(value.ControllerExecutable)), Path.GetDirectoryName(ownExe), StringComparison.OrdinalIgnoreCase) ||
-                Path.GetFileName(value.ControllerExecutable) != "CodexAccountSwitcher.exe" || !File.Exists(value.ControllerExecutable)) throw new IOException("Desktop controller installation changed.");
+                (Path.GetFileName(value.ControllerExecutable) != "CodexRoster.exe" && Path.GetFileName(value.ControllerExecutable) != "CodexAccountSwitcher.exe") || !File.Exists(value.ControllerExecutable)) throw new IOException("Desktop controller installation changed.");
             ManagedBridge.EnsureNoReparsePoint(Path.GetDirectoryName(value.ControllerExecutable));
             string relay = Path.Combine(Path.GetDirectoryName(ownExe), "DesktopAppRelay.exe");
             if (!File.Exists(relay) || (File.GetAttributes(relay) & FileAttributes.ReparsePoint) != 0)

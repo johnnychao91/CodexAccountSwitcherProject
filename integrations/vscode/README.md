@@ -6,7 +6,7 @@
 
 ## 啟用
 
-1. 保留發行資料夾中的 `CodexAccountSwitcher.exe` 與 `ManagedBridge.exe`，兩者必須位於同一資料夾。
+1. 保留發行資料夾中的 `CodexRoster.exe` 與 `ManagedBridge.exe`，兩者必須位於同一資料夾。
 2. 在 VS Code 執行 **Extensions: Install from VSIX…**，選取發行資料夾中的 `codex-account-switcher-vscode.vsix`。
 3. 執行 **Codex Roster: Enable Experimental Integration**，選取 `ManagedBridge.exe`，閱讀並確認啟用提示。
 4. 等待目前 Codex 工作結束，再按 **Reload Window**。只有重新啟動後由代理持有的後端才可控制。

@@ -761,7 +761,7 @@ namespace CodexAccountSwitcher
         { return new ProcessBlocker { Pid = pid, Kind = "Desktop", Name = "ChatGPT.exe", Description = "Fixture desktop App or background process" }; }
         private static void RegisterManagedOpenTests(Action<string, Action> test)
         {
-            test("Explicit managed open never offers orphan recovery while the original owner still exists", delegate
+            test("Explicit managed open preserves a live owner during recovery", delegate
             {
                 var live = DesktopNative.Identity(Process.GetCurrentProcess().Id);
                 Check(live != null, "Fixture process identity unavailable.");
@@ -772,12 +772,12 @@ namespace CodexAccountSwitcher
                     fixture.Record.State = "ownerExitCleanup";
                     fixture.Record.Known = fixture.Record.Idle = false;
                     fixture.Save();
-                    int prompts = 0, validations = 0;
+                    int validations = 0;
                     var client = new DesktopSessionClient(fixture.Root, fixture.Root,
                         () => new List<ProcessBlocker>(), exe => { validations++; throw new IOException("Fixture launch guard."); });
-                    Check(Rejected(() => client.OpenManagedAsync("synthetic-app", null, CancellationToken.None,
-                        pid => { prompts++; return false; }).GetAwaiter().GetResult()), "The fixture unexpectedly launched.");
-                    Check(prompts == 0 && validations == 1 && DesktopNative.Same(live), "A live owner was treated as an orphan.");
+                    Check(Rejected(() => client.OpenManagedAsync("synthetic-app", null, CancellationToken.None)
+                        .GetAwaiter().GetResult()), "The fixture unexpectedly launched.");
+                    Check(validations == 1 && DesktopNative.Same(live), "A live owner was treated as an orphan.");
                 }
                 if (live.Lifetime != null) live.Lifetime.Dispose();
             });

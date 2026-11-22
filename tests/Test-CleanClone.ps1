@@ -78,16 +78,22 @@ function Invoke-Launcher([string]$Argument = '--build-only', [int]$ExpectedCode 
     if ($result.ExitCode -ne $ExpectedCode) { throw ('Launcher verification failed: ' + $result.Output) }
 }
 
-$releaseNames = @('CodexAccountSwitcher.exe', 'CodexAccountSwitcher.exe.config',
+$releaseNames = @('CodexRoster.exe', 'CodexRoster.exe.config',
     'ManagedBridge.exe', 'ManagedBridge.exe.config', 'DesktopRuntimeHost.exe', 'DesktopRuntimeHost.exe.config',
     'DesktopAppRelay.exe', 'DesktopAppRelay.exe.config', 'desktop-start.ps1', 'codex-account-switcher-vscode.vsix')
 
 function Assert-Release {
+    if (Test-Path -LiteralPath (Join-Path $release 'CodexAccountSwitcher.exe')) {
+        throw 'The release contains the old application executable name.'
+    }
     foreach ($name in $releaseNames) {
         $file = Join-Path $release $name
         if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).Length -eq 0) {
             throw ('Missing release dependency: ' + $name)
         }
+    }
+    if ((Get-Item -LiteralPath (Join-Path $release 'CodexRoster.exe')).VersionInfo.FileDescription -ne 'Codex Roster') {
+        throw 'The Windows application description does not match the Roster brand.'
     }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $release 'codex-account-switcher-vscode.vsix'))

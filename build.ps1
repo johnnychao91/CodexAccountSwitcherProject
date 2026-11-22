@@ -16,9 +16,9 @@ foreach ($assembly in @('PresentationFramework.dll', 'PresentationCore.dll', 'Wi
         throw "The .NET Framework WPF assembly $assembly was not found in $wpf. Install or repair .NET Framework 4.8."
     }
 }
-$release = Join-Path $OutputRoot 'release\v1.6.20'
+$release = Join-Path $OutputRoot 'release\v1.6.21'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
-$app = Join-Path $release 'CodexAccountSwitcher.exe'
+$app = Join-Path $release 'CodexRoster.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
     "/out:$app", "/resource:$(Join-Path $projectRoot 'src\Roster\MainWindow.xaml'),MainWindow.xaml",
     "/resource:$(Join-Path $projectRoot 'assets\codex-roster-transparent.png'),RosterLogo.png",
@@ -48,8 +48,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination "$app.config" -Force
 $testBin = Join-Path $OutputRoot 'tests\bin'
 New-Item -ItemType Directory -Force -Path $testBin | Out-Null
-Copy-Item -LiteralPath $app -Destination (Join-Path $testBin 'CodexAccountSwitcher.exe') -Force
-Copy-Item -LiteralPath "$app.config" -Destination (Join-Path $testBin 'CodexAccountSwitcher.exe.config') -Force
+Copy-Item -LiteralPath $app -Destination (Join-Path $testBin 'CodexRoster.exe') -Force
+Copy-Item -LiteralPath "$app.config" -Destination (Join-Path $testBin 'CodexRoster.exe.config') -Force
 & $compiler /nologo /target:exe /main:CodexAccountSwitcher.ManagedBridgeProgram /platform:x64 /optimize+ /codepage:65001 "/out:$(Join-Path $release 'ManagedBridge.exe')" /reference:System.dll /reference:System.Core.dll /reference:System.Security.dll /reference:System.Web.Extensions.dll (Join-Path $projectRoot 'src\Runtime\ManagedBridge.cs') (Join-Path $projectRoot 'src\Runtime\ManagedBridgeProgram.cs') (Join-Path $projectRoot 'src\Desktop\ContinuationAdmission.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Integration helper compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'src\Roster\App.config') -Destination (Join-Path $release 'ManagedBridge.exe.config') -Force

@@ -1,6 +1,6 @@
 # Codex Roster
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.20\CodexAccountSwitcher.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.21\CodexRoster.exe`。
 
 ## 新電腦開始使用
 
@@ -8,7 +8,13 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 2. `git clone` 此專案後，雙擊 `Codex帳號切換器.cmd`。第一次會自動建置；不需要安裝 Visual Studio、Node.js 或 Python，也不用填寫本機路徑。
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
-需要自動切換與續聊時，開啟自動監看、桌面控制及桌面續聊。若 Codex 已在執行，先完成目前工作，再正常 Quit 一次，由切換器建立受管連線。桌面控制依賴 Codex 版本相容性；可選的 Local Work 封鎖另有版本檢查。
+開啟 Roster 時，桌面控制會自動嘗試接管 Codex。要依額度切換帳號，可勾選「自動切換帳號」。「進階選項」提供自動續跑、工作狀態與 VS Code 整合。
+
+## v1.6.21
+
+- 主視窗合併帳號重新整理與額度查詢。桌面連線狀態集中在底部。
+- 桌面控制啟用時，Roster 會連線到現有受管桌面。若目前只有可核對的一般 Codex 桌面，Roster 會向它送出正常退出要求，等程序收尾後重新開啟受管桌面。若 Codex 未正常退出，可從其選單選「結束」，Roster 會接續等待。
+- 執行檔改為 `CodexRoster.exe`。原本的啟動器會開啟新版，帳號庫與整合設定沿用既有位置。
 
 ## v1.6.20：視窗標題列
 
@@ -313,7 +319,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.20\codex-account-switcher-vscode.vsix`。
+1. 在 Roster 展開「進階選項」，選「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.21\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Roster: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。
@@ -343,7 +349,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 ## v1.1.0：各帳號的剩餘額度
 
-已儲存的帳號會各自顯示「5 小時上限」與「每週上限」的剩餘百分比、進度條、重設時間及最近查詢時間。開啟工具、儲存目前帳號或新增帳號後會查詢；也可按「更新全部額度」或「重新整理」手動更新。查詢期間可取消，不會切換目前的 Codex 登入。
+已儲存的帳號會各自顯示「5 小時上限」與「每週上限」的剩餘百分比、進度條、重設時間及最近查詢時間。開啟工具、儲存目前帳號或新增帳號後會查詢；也可按「更新帳號與額度」手動更新。查詢期間可取消，不會切換目前的 Codex 登入。
 
 資料來自官方 [App Server 的 `account/rateLimits/read`](https://learn.chatgpt.com/docs/app-server)。依服務提供的視窗長度區分 5 小時與每週，剩餘量為 `100 - usedPercent`；重設時間以目前電腦時區顯示。未提供的額度會標示「未提供」，不視為無限、0% 或 100%。這些是查詢當下的快照；到達預計重設時間後仍需重新查詢，不會自行推算額度恢復，也不代表其他模型或工作區限制已解除。
 
@@ -429,7 +435,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\Test-CleanClone.ps1
 
 ```powershell
 $report = Join-Path $PWD 'test-results.json'
-$test = Start-Process -FilePath .\tests\bin\CodexAccountSwitcher.exe -ArgumentList '--self-test', ('"{0}"' -f $report) -WindowStyle Hidden -PassThru -Wait
+$test = Start-Process -FilePath .\tests\bin\CodexRoster.exe -ArgumentList '--self-test', ('"{0}"' -f $report) -WindowStyle Hidden -PassThru -Wait
 Get-Content -LiteralPath $report
 ```
 

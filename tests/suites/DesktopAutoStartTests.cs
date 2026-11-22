@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -19,6 +19,37 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("Unmanaged startup selects only one verified app and related desktop descendants", delegate
+            {
+                string path = System.IO.Path.GetFullPath(@"fixture\ChatGPT.exe");
+                string born = "2026-01-01T00:00:00.0000000Z";
+                var app = new DesktopProcessIdentity { Pid = 110, SessionId = 1, ExecutablePath = path, StartedUtc = born };
+                var child = new DesktopProcessIdentity { Pid = 111, ParentPid = 110, SessionId = 1,
+                    ExecutablePath = System.IO.Path.GetFullPath(@"fixture\codex.exe"), StartedUtc = born, ParentIdentity = app };
+                Func<int, ProcessBlocker> blocker = pid => new ProcessBlocker { Pid = pid, Kind = "Desktop",
+                    CreationTime = System.Management.ManagementDateTimeConverter.ToDmtfDateTime(DateTime.Parse(born).ToUniversalTime()) };
+                Func<IList<DesktopSessionState>, IList<ProcessBlocker>, IList<DesktopProcessIdentity>, DesktopProcessIdentity> find =
+                    (states, items, actors) => DesktopAutoStart.FindUnmanagedApp(states, items, actors, path, 1, a => true, a => a.Pid == 110);
+                var empty = new DesktopSessionState[0]; var blockers = new[] { blocker(110), blocker(111) };
+                Check(find(empty, blockers, new[] { app, child }) == app, "Verified child prevented App selection.");
+                child.ParentIdentity = null; child.ParentPid = 999;
+                Check(find(empty, blockers, new[] { app, child }) == null, "Unrelated desktop blocker was accepted.");
+                child.ParentPid = 110; child.ParentIdentity = app; child.StartedUtc = "2025-01-01T00:00:00Z";
+                Check(find(empty, blockers, new[] { app, child }) == null, "Mismatched creation time was accepted.");
+                child.StartedUtc = born; blockers[1].Kind = "CLI";
+                Check(find(empty, blockers, new[] { app, child }) == null, "CLI blocker was accepted.");
+                blockers[1].Kind = "Desktop";
+                Check(find(new[] { Session(Actor(112), Actor(113)) }, blockers, new[] { app, child }) == null,
+                    "A live retained session was ignored.");
+                Check(find(empty, blockers, new[] { app }) == null, "Missing identity was accepted.");
+                Check(find(empty, new[] { blocker(110), blocker(110) }, new[] { app }) == null, "Duplicate blocker was accepted.");
+                Check(DesktopAutoStart.FindUnmanagedApp(empty, new[] { blocker(110) }, new[] { app }, path, 2, a => true, a => true) == null,
+                    "Another Windows session was accepted.");
+                Check(DesktopAutoStart.FindUnmanagedApp(empty, new[] { blocker(110) }, new[] { app }, path, 1, a => true, a => false) == null,
+                    "An App without a window was accepted.");
+                Check(DesktopAutoStart.FindUnmanagedApp(empty, new[] { blocker(110) }, new[] { app }, path, 1, a => { throw new Exception(); }, a => true) == null,
+                    "Failed identity probe was accepted.");
+            });
             test("Desktop startup keeps an explicit off preference without probing or launching", delegate
             {
                 Check(DesktopAutoStart.Decide(false, null, null, actor => { throw new Exception("Must not probe disabled startup."); }) ==

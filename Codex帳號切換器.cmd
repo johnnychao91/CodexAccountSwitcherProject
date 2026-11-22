@@ -8,8 +8,8 @@ if not "%2"=="" goto invalid_arguments
 set "SWITCHER_BUILD_ONLY=1"
 
 :arguments_ready
-set "SWITCHER_RELEASE=%~dp0release\v1.6.20"
-set "SWITCHER_APP=%SWITCHER_RELEASE%\CodexAccountSwitcher.exe"
+set "SWITCHER_RELEASE=%~dp0release\v1.6.21"
+set "SWITCHER_APP=%SWITCHER_RELEASE%\CodexRoster.exe"
 if not exist "%SWITCHER_APP%" goto missing_dependency
 if not exist "%SWITCHER_APP%.config" goto missing_dependency
 if not exist "%SWITCHER_RELEASE%\ManagedBridge.exe" goto missing_dependency

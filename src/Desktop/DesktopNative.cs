@@ -84,8 +84,6 @@ namespace CodexAccountSwitcher
         [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(SafeProcessHandle process, out FileTime created, out FileTime exited, out FileTime kernel, out FileTime user);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint code);
-        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(SafeProcessHandle process, uint code);
-        [DllImport("kernel32.dll", SetLastError = true)] private static extern uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, int flags, StringBuilder name, ref int size);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ProcessIdToSessionId(int pid, out int session);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);
@@ -179,21 +177,6 @@ namespace CodexAccountSwitcher
                 FileTime created, exited, kernel, user;
                 return GetProcessTimes(handle, out created, out exited, out kernel, out user) &&
                     (!StartedMatches(created, identity.StartedUtc) || Value(exited) != 0);
-            }
-        }
-        internal static bool TerminateVerifiedBackend(DesktopProcessIdentity identity)
-        { return TerminateVerifiedProcess(identity, true); }
-
-        internal static bool TerminateVerifiedProcess(DesktopProcessIdentity identity, bool requireNoChildren)
-        {
-            using (var handle = OpenProcess(0x101001, false, identity.Pid))
-            {
-                FileTime created, exited, kernel, user;
-                if (handle.IsInvalid || !GetProcessTimes(handle, out created, out exited, out kernel, out user) ||
-                    !StartedMatches(created, identity.StartedUtc) || !Same(identity)) return ConfirmedExited(identity);
-                if (requireNoChildren && ProcessInspector.HasChildWork(identity.Pid)) return false;
-                return (TerminateProcess(handle, 1) || WaitForSingleObject(handle, 0) == 0) &&
-                    WaitForSingleObject(handle, 7000) == 0;
             }
         }
         internal static string AppToolsPipeName(string path)
