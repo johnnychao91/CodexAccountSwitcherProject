@@ -108,6 +108,47 @@ namespace CodexAccountSwitcher
                 }
                 finally { view.Window.Close(); }
             });
+            test("Desktop startup failure preserves the active monitor and saved preference", delegate
+            {
+                var view = new MainView(false);
+                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "roster-monitor-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    var vault = new Vault(root);
+                    vault.Data.AutoMonitorEnabled = true;
+                    vault.Save();
+                    int cancelledQuotaWaits = 0;
+                    var monitor = new AutoSwitchController(new AutoSwitchHost
+                    {
+                        ReadCurrent = () => null, ReadAccounts = () => vault.Data.Accounts,
+                        QueryUsage = (account, token) => Task.FromResult<AccountUsage>(null),
+                        WaitForRuntimeExit = token => Task.FromResult(0), ConfirmRuntimeQuiet = token => Task.FromResult(0),
+                        Apply = (account, expected) => { }, Launch = () => Task.FromResult(0),
+                        CancelQuotaWait = () => { cancelledQuotaWaits++; return Task.FromResult(0); }
+                    });
+                    typeof(MainView).GetField("vault", flags).SetValue(view, vault);
+                    typeof(MainView).GetField("automatic", flags).SetValue(view, monitor);
+                    typeof(MainView).GetField("monitorRequested", flags).SetValue(view, true);
+                    typeof(MainView).GetMethod("SetMonitorCheck", flags).Invoke(view, new object[] { true });
+                    var timer = (System.Windows.Threading.DispatcherTimer)typeof(MainView).GetField("monitorTimer", flags).GetValue(view);
+                    timer.Start();
+                    monitor.Enable();
+
+                    Func<Task> attempt = () => { throw new UserError("Synthetic desktop startup failure."); };
+                    var operation = (Task)typeof(MainView).GetMethod("RunManual", flags).Invoke(view, new object[] { attempt, true });
+                    operation.GetAwaiter().GetResult();
+
+                    Check(monitor.Enabled && timer.IsEnabled && cancelledQuotaWaits == 0);
+                    Check(((CheckBox)view.Window.FindName("MonitorCheck")).IsChecked == true);
+                    Check(new Vault(root).Data.AutoMonitorEnabled);
+                }
+                finally
+                {
+                    view.Window.Close();
+                    if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, true);
+                }
+            });
             test("Automatic continuation badge distinguishes an enabled preference from an unsupported version and busy operations", delegate
             {
                 var view = new MainView(true);
@@ -126,7 +167,11 @@ namespace CodexAccountSwitcher
                     Check(!(bool)enabled.GetValue(view, null));
                     update.Invoke(view, null);
                     Check(((TextBlock)view.Window.FindName("ContinuationModeText")).Text.Contains("暫不支援桌面續跑"));
-                    Check(((TextBlock)view.Window.FindName("ContinuationStatusText")).Text.Contains("手動續跑"));
+                    var detail = (TextBlock)view.Window.FindName("ContinuationStatusText");
+                    Check(detail.Text.Contains("手動續跑") && !detail.Text.Contains("自動監看"));
+                    typeof(MainView).GetField("monitorRequested", flags).SetValue(view, true);
+                    update.Invoke(view, null);
+                    Check(detail.Text.Contains("自動監看") && detail.Text.Contains("手動續跑"));
                     Check(Button(view, "ContinueDesktopButton").Content.ToString() == "關閉自動續跑");
                     support.SetValue(view, DesktopContinuationSupport.Unverified);
                     Check(!(bool)enabled.GetValue(view, null));
