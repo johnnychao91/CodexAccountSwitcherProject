@@ -13,7 +13,7 @@ $work = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
 if (Test-Path -LiteralPath $work) { throw 'WorkRoot must be a new directory. Existing files will not be changed.' }
 New-Item -ItemType Directory -Path $work | Out-Null
 $source = Join-Path $work 'source'
-$clone = Join-Path $work '中文 clone with spaces'
+$clone = Join-Path $work '中文 clone & spaces (test)'
 $unrelated = Join-Path $work 'unrelated working directory'
 $emptyHooks = Join-Path $work 'empty-hooks'
 $emptyConfig = Join-Path $work 'empty-git-config'
@@ -65,7 +65,8 @@ function Invoke-Git([string[]]$Arguments) {
     return $result.Output
 }
 
-function Invoke-Launcher([string]$Argument = '--build-only', [int]$ExpectedCode = 0, [string]$LauncherRoot = $clone) {
+function Invoke-Launcher([string]$Argument = '--build-only', [int]$ExpectedCode = 0, [string]$LauncherRoot = $clone,
+    [string]$CommandInterpreter = $env:ComSpec) {
     $launcher = Join-Path $LauncherRoot 'Codex帳號切換器.cmd'
     $launcherText = [IO.File]::ReadAllText($launcher)
     foreach ($required in @('set "SWITCHER_BUILD_ONLY=1"', 'if defined SWITCHER_BUILD_ONLY exit /b 0',
@@ -73,7 +74,7 @@ function Invoke-Launcher([string]$Argument = '--build-only', [int]$ExpectedCode 
         if (-not $launcherText.Contains($required)) { throw 'Launcher lacks the required non-GUI test mode; nothing was launched.' }
     }
     $line = '/d /v:off /s /c ""' + $launcher + '" ' + $Argument + '"'
-    $result = Invoke-Child $env:ComSpec $line $unrelated
+    $result = Invoke-Child $CommandInterpreter $line $unrelated
     if ($result.ExitCode -ne $ExpectedCode) { throw ('Launcher verification failed: ' + $result.Output) }
 }
 
@@ -105,6 +106,10 @@ Invoke-Git @('-C', $source, '-c', 'user.name=Clean Clone Test', '-c', 'user.emai
     'commit', '-m', 'Synthetic source-only clone fixture') | Out-Null
 Invoke-Git @('clone', '--no-local', '--', $source, $clone) | Out-Null
 
+$launcherText = [IO.File]::ReadAllText((Join-Path $clone 'Codex帳號切換器.cmd'))
+if (!$launcherText.Contains("`r`n") -or $launcherText -match '(?<!\r)\n') {
+    throw 'A clean checkout must retain Windows line endings for the batch launcher.'
+}
 $releases = @(Get-ChildItem -LiteralPath $clone -Directory -Filter 'dist-*')
 if ($releases.Count -ne 0 -or (Test-Path -LiteralPath (Join-Path $clone 'tests\bin'))) { throw 'Clone contains build artifacts.' }
 Invoke-Launcher '--unknown-test-option' 2
@@ -113,6 +118,9 @@ $failureFixture = Join-Path $work 'failed build fixture'
 New-Item -ItemType Directory -Path $failureFixture | Out-Null
 Copy-Item -LiteralPath (Join-Path $clone 'Codex帳號切換器.cmd') -Destination $failureFixture
 [IO.File]::WriteAllText((Join-Path $failureFixture 'build.ps1'), 'exit 3')
+Invoke-Launcher '--build-only' 1 $failureFixture
+# A successful build script that omits release dependencies must still fail safely.
+[IO.File]::WriteAllText((Join-Path $failureFixture 'build.ps1'), 'exit 0')
 Invoke-Launcher '--build-only' 1 $failureFixture
 Invoke-Launcher
 $releases = @(Get-ChildItem -LiteralPath $clone -Directory -Filter 'dist-*')
@@ -133,11 +141,19 @@ foreach ($name in $releaseNames) {
 Remove-Item -LiteralPath (Join-Path $release 'DesktopAppRelay.exe.config')
 Invoke-Launcher
 Assert-Release
+$cmd32 = Join-Path $env:WINDIR 'SysWOW64\cmd.exe'
+$rebuiltFrom32Bit = Test-Path -LiteralPath $cmd32 -PathType Leaf
+if ($rebuiltFrom32Bit) {
+    Remove-Item -LiteralPath (Join-Path $release 'ManagedBridge.exe.config')
+    Invoke-Launcher -CommandInterpreter $cmd32
+    Assert-Release
+}
 if (-not [string]::IsNullOrWhiteSpace((Invoke-Git @('-C', $clone, 'status', '--porcelain', '--untracked-files=all')))) {
     throw 'Building changed the source checkout or produced non-ignored files.'
 }
 $summary = [pscustomobject]@{ Passed = $true; CloneRoot = $clone; ReleaseFiles = $releaseNames.Count; VsixEntries = 5;
     FreshCloneBuilt = $true; CachedReleasePreserved = $true; MissingDependencyRebuilt = $true;
+    RebuiltFrom32BitCmd = $rebuiltFrom32Bit;
     UnknownArgumentsRejected = $true; BuildFailureReturnsWithoutPause = $true;
     CodexAppLaunched = $false; RealCredentialsRead = $false }
 $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $work 'result.json') -Encoding UTF8

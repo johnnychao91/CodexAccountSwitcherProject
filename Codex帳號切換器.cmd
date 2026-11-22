@@ -1,31 +1,38 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 set "SWITCHER_BUILD_ONLY="
+set "SWITCHER_BUILT="
 if "%1"=="" goto arguments_ready
 if /i not "%~1"=="--build-only" goto invalid_arguments
 if not "%2"=="" goto invalid_arguments
 set "SWITCHER_BUILD_ONLY=1"
 
 :arguments_ready
-set "SWITCHER_APP=%~dp0dist-v1.6.16\CodexAccountSwitcher.exe"
-if not exist "%SWITCHER_APP%" goto build
-if not exist "%SWITCHER_APP%.config" goto build
-if not exist "%~dp0dist-v1.6.16\ManagedBridge.exe" goto build
-if not exist "%~dp0dist-v1.6.16\ManagedBridge.exe.config" goto build
-if not exist "%~dp0dist-v1.6.16\codex-account-switcher-vscode.vsix" goto build
-if not exist "%~dp0dist-v1.6.16\DesktopRuntimeHost.exe" goto build
-if not exist "%~dp0dist-v1.6.16\DesktopRuntimeHost.exe.config" goto build
-if not exist "%~dp0dist-v1.6.16\DesktopAppRelay.exe" goto build
-if not exist "%~dp0dist-v1.6.16\DesktopAppRelay.exe.config" goto build
-if not exist "%~dp0dist-v1.6.16\desktop-start.ps1" goto build
+set "SWITCHER_APP=%~dp0dist-v1.6.17\CodexAccountSwitcher.exe"
+if not exist "%SWITCHER_APP%" goto missing_dependency
+if not exist "%SWITCHER_APP%.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\ManagedBridge.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\ManagedBridge.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\codex-account-switcher-vscode.vsix" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\DesktopRuntimeHost.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\DesktopRuntimeHost.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\DesktopAppRelay.exe" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\DesktopAppRelay.exe.config" goto missing_dependency
+if not exist "%~dp0dist-v1.6.17\desktop-start.ps1" goto missing_dependency
 goto launch
+
+:missing_dependency
+if defined SWITCHER_BUILT goto build_failed
 
 :build
 echo Building Codex Account Switcher...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
+set "SWITCHER_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "SWITCHER_POWERSHELL=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%SWITCHER_POWERSHELL%" goto powershell_missing
+"%SWITCHER_POWERSHELL%" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
 if errorlevel 1 goto build_failed
-if not exist "%SWITCHER_APP%" goto build_failed
-if not exist "%SWITCHER_APP%.config" goto build_failed
+set "SWITCHER_BUILT=1"
+goto arguments_ready
 
 :launch
 if defined SWITCHER_BUILD_ONLY exit /b 0
@@ -33,6 +40,8 @@ start "" "%SWITCHER_APP%"
 if errorlevel 1 goto launch_failed
 exit /b 0
 
+:powershell_missing
+echo Windows PowerShell 5.1 was not found.
 :build_failed
 echo.
 echo Build failed. Please review the error above and try again.

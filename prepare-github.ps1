@@ -9,7 +9,7 @@ if ([string]::IsNullOrWhiteSpace($Destination)) {
 }
 $targetRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination).TrimEnd('\', '/')
 $files = @(
-    '.gitignore', 'App.config', 'App.cs', 'build.ps1', 'Codex帳號切換器.cmd',
+    '.gitattributes', '.gitignore', 'App.config', 'App.cs', 'build.ps1', 'Codex帳號切換器.cmd',
     'Core.cs', 'DesktopLauncher.cs', 'MainWindow.xaml', 'ProcessInspector.cs',
     'ProcessInspectorTests.cs', 'README.md', 'SelfTests.cs', 'SwitchWorkflow.cs',
     'ProjectSidebar.cs', 'ProjectSidebarTests.cs',

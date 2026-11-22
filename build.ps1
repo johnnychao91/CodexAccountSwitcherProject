@@ -1,9 +1,21 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
+if (-not [Environment]::Is64BitOperatingSystem) {
+    throw 'This application requires 64-bit Windows and .NET Framework 4.8.'
+}
+if ([string]::IsNullOrWhiteSpace($env:WINDIR)) { throw 'WINDIR is not set; cannot locate the .NET Framework compiler.' }
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
+    throw "The .NET Framework compiler was not found at $compiler. Install or repair .NET Framework 4.8."
+}
 $framework = Split-Path $compiler
 $wpf = Join-Path $framework 'WPF'
-$release = Join-Path $projectRoot 'dist-v1.6.16'
+foreach ($assembly in @('PresentationFramework.dll', 'PresentationCore.dll', 'WindowsBase.dll')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $wpf $assembly) -PathType Leaf)) {
+        throw "The .NET Framework WPF assembly $assembly was not found in $wpf. Install or repair .NET Framework 4.8."
+    }
+}
+$release = Join-Path $projectRoot 'dist-v1.6.17'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',
