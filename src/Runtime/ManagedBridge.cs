@@ -37,15 +37,42 @@ namespace CodexAccountSwitcher
         { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexAccountSwitcher", "integrations", "vscode", "runtimes"); } }
     }
 
+    internal static class DesktopHistoryReply
+    {
+        internal const int NormalBytes = 32 * 1024 * 1024;
+        internal const int MaximumBytes = 128 * 1024 * 1024;
+        internal const int PrefixLimit = 4096;
+        private static readonly System.Text.RegularExpressions.Regex Envelope = new System.Text.RegularExpressions.Regex(
+            @"\A\s*\{\s*(?:""jsonrpc""\s*:\s*""2\.0""\s*,\s*)?""id""\s*:\s*(?<id>-?[0-9]{1,20}|""(?:[^""\x5c\x00-\x1f]|\x5c.){0,512}"")\s*,\s*""(?<kind>result|error)""\s*:",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        internal static bool TryReadEnvelope(string line, out object id, out bool result)
+        {
+            id = null; result = false;
+            if (String.IsNullOrEmpty(line)) return false;
+            var match = Envelope.Match(line.Length > PrefixLimit ? line.Substring(0, PrefixLimit) : line);
+            if (!match.Success) return false;
+            try { id = new JavaScriptSerializer().DeserializeObject(match.Groups["id"].Value); }
+            catch (ArgumentException) { return false; }
+            catch (InvalidOperationException) { return false; }
+            result = match.Groups["kind"].Value == "result";
+            return id is string || id is int || id is long;
+        }
+
+        internal static bool IsLarge(string line)
+        { return line.Length > NormalBytes / 3 && Encoding.UTF8.GetByteCount(line) > NormalBytes; }
+    }
+
     // This process owns the only stdin writer for its child. It never attaches to another process.
     // Full protocol lines exist only while forwarding; catalogs and controller replies contain metadata.
     public sealed class ManagedBridge : IDisposable
     {
-        private const int MaxLineChars = 32 * 1024 * 1024;
+        private const int MaxLineChars = DesktopHistoryReply.NormalBytes;
         private readonly ManagedBridgeOptions options;
         private readonly TextReader clientInput;
         private readonly TextWriter clientOutput;
         private readonly object stateGate = new object(), backendWriteGate = new object(), outputGate = new object(), controlGate = new object();
+        private readonly object backendExitGate = new object();
         private readonly Dictionary<string, TaskCompletionSource<Dictionary<string, object>>> internalRequests = new Dictionary<string, TaskCompletionSource<Dictionary<string, object>>>();
         private readonly Dictionary<string, string> clientRequests = new Dictionary<string, string>();
         private readonly HashSet<string> readOnlyClientRequests = new HashSet<string>();
@@ -70,13 +97,43 @@ namespace CodexAccountSwitcher
         private long requestSequence, activitySequence;
         private bool initialized, initializeReplyForwarded, clientInitialized, protocolHealthy = true, frozen, expectedExit, resumeRequested, disposed;
         private bool eofAttempted, backendInputClosed;
-        private volatile bool backendExitObserved;
+        private volatile bool backendStarted, backendExitObserved, idleTerminationIssued;
         private Snapshot preparedSnapshot;
         private readonly ManualResetEventSlim backendReady = new ManualResetEventSlim(false);
         public string InstanceId { get; private set; }
         public string PipeName { get; private set; }
         public int ExitCode { get; private set; }
         internal bool BackendExitObserved { get { return backendExitObserved; } }
+        internal bool IdleTerminationIssued { get { return idleTerminationIssued; } }
+        internal bool ObserveBackendExit()
+        {
+            lock (backendExitGate)
+            {
+                if (backendExitObserved) return true;
+                if (!backendStarted) return false;
+                try
+                {
+                    if (!backend.HasExited) return false;
+                    ExitCode = backend.ExitCode;
+                    backendExitObserved = true;
+                    return true;
+                }
+                catch (InvalidOperationException) { return false; }
+                catch (System.ComponentModel.Win32Exception) { return false; }
+            }
+        }
+        internal bool TerminateOwnedBackend()
+        {
+            lock (backendExitGate)
+            {
+                if (ObserveBackendExit()) return false;
+                if (!backendStarted) throw new IOException("Owned backend process has not been verified.");
+                try { backend.Kill(); return true; }
+                catch (InvalidOperationException) { if (!ObserveBackendExit()) throw; }
+                catch (System.ComponentModel.Win32Exception) { if (!ObserveBackendExit()) throw; }
+                return false;
+            }
+        }
         internal ContinuationAdmission ContinuationAdmission { get { return options.Admission; } }
         internal bool HasFrontendResumedThread(string threadId)
         { lock (stateGate) return threadId != null && frontendResumedThreads.Contains(threadId); }
@@ -108,6 +165,7 @@ namespace CodexAccountSwitcher
         public ManagedBridge(ManagedBridgeOptions options, TextReader clientInput, TextWriter clientOutput)
         {
             this.options = options; this.clientInput = clientInput; this.clientOutput = clientOutput;
+            ExitCode = 1;
             InstanceId = Guid.NewGuid().ToString("N");
             PipeName = "CodexAccountSwitcher.vscode." + InstanceId;
             internalPrefix = "__cas_control_" + InstanceId + ":";
@@ -207,6 +265,7 @@ namespace CodexAccountSwitcher
                 }
             backend = new Process { StartInfo = start };
             if (!backend.Start()) throw new IOException("The managed backend could not start.");
+            backendStarted = true;
             try
             {
                 // Framework Process.StandardInput inherits the host console code page.
@@ -240,12 +299,7 @@ namespace CodexAccountSwitcher
                 while (BackendAlive()) Thread.Sleep(100);
                 // A failed lookup is not evidence that the owned process exited. Capture
                 // positive evidence from our retained Process before it is disposed.
-                try
-                {
-                    if (backend.HasExited) { ExitCode = backend.ExitCode; backendExitObserved = true; }
-                    else ExitCode = 1;
-                }
-                catch { ExitCode = 1; }
+                ObserveBackendExit();
                 Dispose();
             }
         }
@@ -260,6 +314,47 @@ namespace CodexAccountSwitcher
                 line.Append((char)next);
             }
             return line.Length == 0 ? null : line.ToString();
+        }
+
+        internal sealed class BackendLineReader
+        {
+            private readonly TextReader input;
+            private readonly int limit;
+            private readonly char[] buffer = new char[16384];
+            private int offset, available;
+            internal BackendLineReader(TextReader input, int limit) { this.input = input; this.limit = limit; }
+
+            internal string Read(out bool oversized)
+            {
+                oversized = false;
+                var line = new StringBuilder();
+                while (true)
+                {
+                    if (offset == available)
+                    {
+                        available = input.Read(buffer, 0, buffer.Length); offset = 0;
+                        if (available == 0) return line.Length == 0 ? null : line.ToString();
+                    }
+                    int end = Array.IndexOf(buffer, '\n', offset, available - offset);
+                    int count = (end < 0 ? available : end) - offset;
+                    if (!oversized)
+                    {
+                        if (count > limit - line.Length)
+                        {
+                            // Keep only the bounded JSON-RPC envelope and drain the
+                            // remainder. Stopping the reader would strand the pipe.
+                            int prefix = Math.Min(DesktopHistoryReply.PrefixLimit, limit);
+                            int keep = Math.Min(prefix - line.Length, count);
+                            if (keep > 0) line.Append(buffer, offset, keep);
+                            line = new StringBuilder(line.ToString(0, Math.Min(prefix, line.Length)));
+                            oversized = true;
+                        }
+                        else line.Append(buffer, offset, count);
+                    }
+                    offset += count;
+                    if (end >= 0) { offset++; return line.ToString().TrimEnd('\r'); }
+                }
+            }
         }
         private void WriteClient(string line)
         { lock (outputGate) { clientOutput.WriteLine(line); clientOutput.Flush(); } }
@@ -397,9 +492,18 @@ namespace CodexAccountSwitcher
         {
             try
             {
+                var reader = options.EnableHostControl ? new BackendLineReader(backend.StandardOutput, DesktopHistoryReply.MaximumBytes) : null;
                 string line;
-                while ((line = ReadLine(backend.StandardOutput, MaxLineChars)) != null)
+                while (true)
                 {
+                    bool oversized = false;
+                    line = reader == null ? ReadLine(backend.StandardOutput, MaxLineChars) : reader.Read(out oversized);
+                    if (line == null) break;
+                    if (reader != null && (oversized || DesktopHistoryReply.IsLarge(line)))
+                    {
+                        HandleLargeDesktopReply(line, oversized || Encoding.UTF8.GetByteCount(line) > DesktopHistoryReply.MaximumBytes);
+                        continue;
+                    }
                     Dictionary<string, object> message = null;
                     try { message = Parse(line); } catch { MarkUnknown("unrecognizedBackendProtocol"); }
                     bool suppress = false, forwardSuccessfulInitialize = false;
@@ -440,7 +544,7 @@ namespace CodexAccountSwitcher
                 try { backend.WaitForExit(); } catch { }
                 lock (stateGate)
                 {
-                    bool normal = expectedExit && eofAttempted && backendInputClosed && !BackendAlive() && backend.ExitCode == 0;
+                    bool normal = expectedExit && eofAttempted && backendInputClosed && !BackendAlive() && (backend.ExitCode == 0 || idleTerminationIssued);
                     state = normal ? "quiesced" : "unknown";
                     reason = normal ? null : "backendExitedUnexpectedly";
                     foreach (var pending in internalRequests.Values) pending.TrySetException(new IOException("Backend disconnected."));
@@ -448,6 +552,32 @@ namespace CodexAccountSwitcher
                     try { WriteCatalog(); } catch { protocolHealthy = false; reason = "catalogUnavailable"; }
                 }
             }
+        }
+        private void HandleLargeDesktopReply(string line, bool exceedsLimit)
+        {
+            object id; bool result;
+            if (!DesktopHistoryReply.TryReadEnvelope(line, out id, out result))
+            { MarkUnknown("desktopResponseUnavailable"); return; }
+
+            string method;
+            lock (stateGate) clientRequests.TryGetValue(Key(id), out method);
+            bool history = method == "thread/read" || method == "thread/resume" || method == "thread/turns/list" || method == "thread/items/list";
+            bool forward = history && result && !exceedsLimit;
+            var finished = new Dictionary<string, object> { { "id", id } };
+            if (forward) finished["result"] = new Dictionary<string, object>();
+            else finished["error"] = new { code = -32070, message = "This Codex response exceeded the managed desktop reply limit." };
+            if (id is string && ((string)id).StartsWith(internalPrefix, StringComparison.Ordinal))
+            {
+                TaskCompletionSource<Dictionary<string, object>> pending;
+                lock (stateGate) { internalRequests.TryGetValue((string)id, out pending); internalRequests.Remove((string)id); }
+                if (pending != null) pending.TrySetResult(finished);
+                return;
+            }
+            if (method == null) { MarkUnknown("desktopResponseUnavailable"); return; }
+            // Account for this response without inferring continuation ownership
+            // from a history body we did not deserialize.
+            ObserveBackend(finished, id, true, null);
+            WriteClient(forward ? line : Encode(finished));
         }
         private void ObserveBackend(Dictionary<string, object> message, object id, bool hasId, string method)
         {
@@ -564,6 +694,16 @@ namespace CodexAccountSwitcher
                 if (!initialized || !initializeReplyForwarded || options.RequireInitializedNotification && !clientInitialized)
                 { snapshot.Reason = reason == "initializeFailed" ? reason : "initializing"; return snapshot; }
                 if (!protocolHealthy) { snapshot.Reason = reason ?? "backendUnavailable"; return snapshot; }
+                // The desktop's history reads use the same app-server as status
+                // polling. Let the foreground hydration finish before scanning
+                // loaded threads or granting an idle shutdown lease.
+                if (options.EnableHostControl && clientRequests.Values.Any(method => method == "thread/resume" || method == "thread/read" ||
+                    method == "thread/list" || method == "thread/turns/list" || method == "thread/items/list"))
+                {
+                    snapshot.Pending = clientRequests.Count + pendingServerRequests.Count + inFlightForwards;
+                    snapshot.Reason = "desktopConversationLoading";
+                    return snapshot;
+                }
             }
             try
             {
@@ -1033,13 +1173,32 @@ namespace CodexAccountSwitcher
             lock (stateGate)
             {
                 if (!ControlEnabled()) return new Snapshot { Reason = "backendExitUnconfirmed" };
-                if (!observed.HasValue || observed.Value != 0)
+                if (!observed.HasValue || observed.Value != 0 && !idleTerminationIssued)
                 {
                     state = "unknown"; reason = observed.HasValue ? "backendExitFailed" : "backendExitTimeout"; WriteCatalog();
                     return new Snapshot { Reason = reason };
                 }
                 state = "quiesced"; reason = null; preparedSnapshot = null; WriteCatalog();
                 return new Snapshot { Known = true, Idle = true };
+            }
+        }
+
+        internal Dictionary<string, object> FinishIdleShutdown(Func<bool> mayContinue, int timeout)
+        {
+            var clock = Stopwatch.StartNew();
+            lock (controlGate)
+            {
+                lock (stateGate)
+                {
+                    // The original prepare/commit must still own the barrier. EOF must
+                    // have reached the verified child before the fallback can run.
+                    if (!options.EnableHostControl || !expectedExit || !eofAttempted || !backendInputClosed || !frozen ||
+                        !protocolHealthy || preparedSnapshot == null || preparedSnapshot.Sequence != activitySequence ||
+                        !ControlEnabled() || mayContinue == null || !mayContinue())
+                        return HostResult(new Snapshot { Reason = "backendExitUnconfirmed" });
+                    if (!idleTerminationIssued) idleTerminationIssued = TerminateOwnedBackend();
+                }
+                return HostResult(ConfirmCommittedExit(clock, timeout));
             }
         }
 
@@ -1152,9 +1311,13 @@ namespace CodexAccountSwitcher
                 if (disposed) return;
                 disposed = true;
                 try { if (listeningPipe != null) listeningPipe.Dispose(); } catch { }
-                if (catalogPath != null && File.Exists(catalogPath)) File.Delete(catalogPath);
+                // A locked stale catalog cannot undo the retained process's exit evidence.
+                try { if (catalogPath != null) File.Delete(catalogPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
-            if (backend != null && !BackendAlive() && (backendReaderTask == null || backendReaderTask.IsCompleted)) backend.Dispose();
+            lock (backendExitGate)
+                if (ObserveBackendExit() && (backendReaderTask == null || backendReaderTask.IsCompleted)) backend.Dispose();
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]

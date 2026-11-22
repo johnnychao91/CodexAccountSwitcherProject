@@ -35,7 +35,7 @@ namespace CodexAccountSwitcher
                     var service = new SwitchService(new Vault(f.Storage), f.Home, () => false);
                     service.Apply(f.Target);
                     Check(File.ReadAllText(f.Auth) == f.Target);
-                    string first = Directory.GetFiles(f.Backups).Single();
+                    string first = f.ExportLatest();
                     using (var stream = File.OpenRead(first))
                     using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
                     {
@@ -53,7 +53,7 @@ namespace CodexAccountSwitcher
                     Check(File.ReadAllText(memory) == "memory after B");
                     Check(File.ReadAllText(Path.Combine(f.Sqlite, "state_5.sqlite-wal")) == "uncheckpointed db update");
                     Check(File.ReadAllText(Path.Combine(f.Home, ProjectSidebar.FileName)) == "{\"cloud\":\"do not preserve\"}");
-                    var snapshots = Directory.GetFiles(f.Backups, "*.zip");
+                    var snapshots = Directory.GetFiles(f.Backups, "*.snapshot.json");
                     Check(snapshots.Length == 2);
                     using (var stream = File.OpenRead(first))
                     using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
@@ -72,7 +72,7 @@ namespace CodexAccountSwitcher
                 {
                     Environment.SetEnvironmentVariable("CODEX_SQLITE_HOME", f.Sqlite);
                     service.Apply(f.Target);
-                    string first = Directory.GetFiles(f.Backups).Single();
+                    string first = Directory.GetFiles(f.Backups, "*.snapshot.json").Single();
                     using (File.Open(memory, FileMode.Open, FileAccess.Write, FileShare.None))
                         Reject(() => service.Apply(f.Source, true));
                     int checks = 0;
@@ -82,8 +82,8 @@ namespace CodexAccountSwitcher
                         return false;
                     });
                     Reject(() => changing.Apply(f.Source, true));
-                    Check(File.ReadAllText(f.Auth) == f.Target && Directory.GetFiles(f.Backups).Single() == first);
-                    using (var stream = File.OpenRead(first))
+                    Check(File.ReadAllText(f.Auth) == f.Target && Directory.GetFiles(f.Backups, "*.snapshot.json").Single() == first);
+                    using (var stream = File.OpenRead(f.ExportLatest()))
                     using (var zip = new ZipArchive(stream, ZipArchiveMode.Read))
                         Check(Read(zip, "home/memories/MEMORY.md") == "first");
                 }
@@ -102,13 +102,13 @@ namespace CodexAccountSwitcher
                     var progress = new SnapshotProgress(percent =>
                     {
                         Check(percent > 0 && percent < 100);
-                        Check(Directory.GetFiles(f.Backups, "*.tmp").Length == 1);
                         cancellation.Cancel();
                     });
                     bool cancelled = false;
                     try { service.PrepareAsync(f.Target, false, null, cancellation.Token, progress).GetAwaiter().GetResult(); }
                     catch (OperationCanceledException) { cancelled = true; }
-                    Check(cancelled && Directory.GetFiles(f.Backups).Length == 0);
+                    Check(cancelled && Directory.GetFiles(f.Backups, "*.snapshot.json").Length == 0 &&
+                        Directory.GetFiles(Path.Combine(f.Backups, "parts")).Length == 0);
                     Check(File.ReadAllText(f.Auth) == f.Source && vault.Data.PreviousAuth == null);
                 }
             });
@@ -120,12 +120,47 @@ namespace CodexAccountSwitcher
                 var vault = new Vault(f.Storage);
                 var service = new SwitchService(vault, f.Home, () => false);
                 var commit = service.PrepareAsync(f.Target, false, null, CancellationToken.None, null).GetAwaiter().GetResult();
-                Check(Directory.GetFiles(f.Backups, "*.zip").Length == 1);
+                Check(Directory.GetFiles(f.Backups, "*.snapshot.json").Length == 1);
                 Check(File.ReadAllText(f.Auth) == f.Source && vault.Data.PreviousAuth == null);
                 string changed = SelfTests.Auth("history-a", "workspace", "a@example.com", "plus", "rotated");
                 File.WriteAllText(f.Auth, changed);
                 Reject(commit);
                 Check(File.ReadAllText(f.Auth) == changed && vault.Data.PreviousAuth == null);
+            });
+
+            test("Unchanged history reuses its snapshot and a changed SQLite page stores only one new part", delegate
+            {
+                var f = new Fixture(root);
+                const int partSize = 1024 * 1024;
+                string database = f.Put(f.Sqlite, "state_5.sqlite", "");
+                byte[] data = new byte[3 * partSize];
+                data[0] = 1; data[partSize] = 2; data[2 * partSize] = 3;
+                File.WriteAllBytes(database, data);
+                string parts = Path.Combine(f.Backups, "parts");
+                var progress = new SnapshotProgress(percent => { throw new Exception("Unchanged data was copied."); });
+                LocalCodexSnapshot.Save(f.Home, f.Sqlite, f.Storage, () => { }, CancellationToken.None, null);
+                string first = Directory.GetFiles(f.Backups, "*.snapshot.json").Single();
+                Check(Directory.GetFiles(parts).Length == 3);
+                LocalCodexSnapshot.Save(f.Home, f.Sqlite, f.Storage, () => { }, CancellationToken.None, progress);
+                Check(Directory.GetFiles(f.Backups, "*.snapshot.json").Single() == first);
+                DateTime written = File.GetLastWriteTimeUtc(database);
+                using (var stream = File.OpenWrite(database))
+                {
+                    stream.Position = partSize;
+                    stream.WriteByte(9);
+                }
+                // A restored last-write timestamp must not masquerade as unchanged content.
+                File.SetLastWriteTimeUtc(database, written);
+                LocalCodexSnapshot.Save(f.Home, f.Sqlite, f.Storage, () => { }, CancellationToken.None, null);
+                Check(Directory.GetFiles(parts).Length == 4 && Directory.GetFiles(f.Backups, "*.snapshot.json").Length == 2);
+                using (var zip = new ZipArchive(File.OpenRead(f.ExportLatest()), ZipArchiveMode.Read))
+                using (var entry = zip.GetEntry("sqlite/state_5.sqlite").Open())
+                using (var copy = new MemoryStream())
+                {
+                    entry.CopyTo(copy);
+                    data[partSize] = 9;
+                    Check(data.SequenceEqual(copy.ToArray()));
+                }
             });
         }
 
@@ -161,7 +196,7 @@ namespace CodexAccountSwitcher
                 Home = Path.Combine(folder, "Codex 家目錄");
                 Sqlite = Path.Combine(folder, "SQLite");
                 Storage = Path.Combine(folder, "private");
-                Backups = Path.Combine(Storage, LocalCodexSnapshot.DirectoryName);
+                Backups = Path.Combine(Storage, LocalCodexSnapshot.DirectoryName, "incremental");
                 Directory.CreateDirectory(Sqlite);
                 Auth = Put(Home, "auth.json", Source);
             }
@@ -172,6 +207,13 @@ namespace CodexAccountSwitcher
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllText(path, text);
                 return path;
+            }
+
+            internal string ExportLatest()
+            {
+                string result = Path.Combine(Storage, "restore-" + Guid.NewGuid().ToString("N") + ".zip");
+                LocalCodexSnapshot.Export(Storage, "latest", result);
+                return result;
             }
         }
     }

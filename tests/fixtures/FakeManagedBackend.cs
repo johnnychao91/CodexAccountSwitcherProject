@@ -51,6 +51,18 @@ internal static class FakeManagedBackend
             object id; request.TryGetValue("id", out id);
             string method = Str(request, "method");
             object raw; var parameters = request.TryGetValue("params", out raw) ? raw as Dictionary<string, object> : null;
+            if (mode == "slow-hydration" && method == "thread/read" && Object.Equals(id, "client:slow-history")) Thread.Sleep(2500);
+            if (mode == "large-history" && (Object.Equals(id, "client:large-history") || Object.Equals(id, "client:large-other")))
+            {
+                lock (outputGate)
+                {
+                    Console.Write("{\"id\":" + Json.Serialize(id) + ",\"result\":{\"history\":\"");
+                    var fill = new string('x', 1024 * 1024);
+                    for (int part = 0; part < 33; part++) Console.Write(fill);
+                    Console.WriteLine("\"}}"); Console.Out.Flush();
+                }
+                continue;
+            }
             if (method == null)
             { Send(new { method = "test/callback-accepted", @params = new { id = id } }); continue; }
             if (!request.ContainsKey("id") && method != "initialized")
@@ -213,6 +225,7 @@ internal static class FakeManagedBackend
             Send(new { id = id, result = parameters ?? new Dictionary<string, object>() });
         }
         if (mode == "slow-exit") Thread.Sleep(1000);
+        if (mode == "stubborn-owner-exit") Thread.Sleep(20000);
         return mode == "bad-exit" ? 7 : 0;
     }
 }

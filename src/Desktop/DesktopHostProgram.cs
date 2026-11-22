@@ -125,8 +125,9 @@ namespace CodexAccountSwitcher
         private readonly object completionGate = new object();
         private volatile bool disconnected;
         public bool Disconnected { get { return disconnected; } }
-        internal bool BackendExited { get { return Running.Status == TaskStatus.RanToCompletion && Bridge.BackendExitObserved; } }
+        internal bool BackendExited { get { return Bridge.ObserveBackendExit(); } }
         public bool Exited0 { get { return (CommitConfirmed || OwnerExitCleanup) && BackendExited && Bridge.ExitCode == 0 && Backend != null && !DesktopNative.Same(Backend); } }
+        public bool Retired { get { return Exited0 || CommitConfirmed && Bridge.IdleTerminationIssued && BackendExited && Backend != null && !DesktopNative.Same(Backend); } }
         internal DesktopBridgeMember(DesktopHostSpecification spec, DesktopPackageTarget target, DesktopWebSocketConnection connection, int generation)
             : this(spec, target, connection, generation, null) { }
         internal DesktopBridgeMember(DesktopHostSpecification spec, DesktopPackageTarget target, DesktopWebSocketConnection connection, int generation, string[] fixtureBackendArguments)
@@ -143,8 +144,16 @@ namespace CodexAccountSwitcher
             output.Send = line =>
             {
                 if (disconnected) return;
-                try { using (var deadline = new CancellationTokenSource(10000)) Connection.SendText(line, deadline.Token); }
-                catch { disconnected = true; }
+                try
+                {
+                    bool history = DesktopHistoryReply.IsLarge(line);
+                    using (var deadline = new CancellationTokenSource(history ? 60000 : 10000))
+                    {
+                        if (history) Connection.SendHistoryReply(line, deadline.Token);
+                        else Connection.SendText(line, deadline.Token);
+                    }
+                }
+                catch { disconnected = true; Connection.Dispose(); }
             };
             Bridge = new ManagedBridge(new ManagedBridgeOptions { BackendExecutable = target.CliExecutable,
                 BackendArguments = fixtureBackendArguments ?? DesktopRuntimeHost.ManagedBackendArguments(),
@@ -193,11 +202,17 @@ namespace CodexAccountSwitcher
             var clock = Stopwatch.StartNew();
             // Begin once. Subsequent observations cannot write stdin or send an RPC.
             var result = ReadControl("beginCommit", Math.Min(7000, budgetMs));
+            long eofObservedAt = clock.ElapsedMilliseconds;
             while (DesktopSessionFiles.Flag(result, "eofCommitted") &&
                 (DesktopSessionFiles.Text(result, "reason") == "backendExitPending" || DesktopSessionFiles.Text(result, "reason") == "backendExitTimeout"))
             {
                 int remaining = budgetMs - (int)clock.ElapsedMilliseconds;
                 if (remaining < 100 || !mayContinue()) break;
+                if (clock.ElapsedMilliseconds - eofObservedAt >= 2000)
+                {
+                    result = Bridge.FinishIdleShutdown(mayContinue, Math.Min(3000, remaining));
+                    break;
+                }
                 result = ReadControl("confirmCommit", Math.Min(1000, remaining));
             }
             CompleteConfirmedCommit(result);
@@ -221,12 +236,17 @@ namespace CodexAccountSwitcher
                 Feed.End(); Running.Wait(2000);
                 // The App's stdio relay must receive a normal EOF only after this
                 // owned backend has positively committed EOF/exit 0.
-                if (!disconnected) Connection.Close(1000, "Account switch backend exited normally.");
+                if (!disconnected) Connection.Close(1000, "Account switch backend retired.");
             }
         }
         internal void MarkDisconnected() { disconnected = true; }
         internal void EndForConfirmedOwnerExit()
         { OwnerExitCleanup = true; disconnected = true; Feed.End(); }
+        internal void TerminateAfterOwnerExit()
+        {
+            if (!OwnerExitCleanup) throw new IOException("The owned App has not exited.");
+            Bridge.TerminateOwnedBackend();
+        }
     }
 
     internal sealed class DesktopContinuationRetirements
@@ -531,7 +551,7 @@ namespace CodexAccountSwitcher
         {
             lock (transaction.Admission)
             {
-                if (disposed || transaction.Frozen || members.Count(m => !m.Exited0) >= 16 || members.Count >= 128 || app == null) return false;
+                if (disposed || transaction.Frozen || members.Count(m => !m.Retired) >= 16 || members.Count >= 128 || app == null) return false;
                 var actual = DesktopNative.Identity(peer.Pid);
                 bool isApp = actual != null && String.Equals(actual.ExecutablePath, target.AppExecutable, StringComparison.OrdinalIgnoreCase);
                 bool isRelay = actual != null && String.Equals(actual.ExecutablePath, RelayExecutable, StringComparison.OrdinalIgnoreCase);
@@ -547,7 +567,7 @@ namespace CodexAccountSwitcher
             DesktopProcessIdentity primaryApp;
             lock (transaction.Admission)
             {
-                if (transaction.Frozen || members.Count(m => !m.Exited0) >= 16 || members.Count >= 128 || !Authorize(connection.Peer))
+                if (transaction.Frozen || members.Count(m => !m.Retired) >= 16 || members.Count >= 128 || !Authorize(connection.Peer))
                 { connection.Close(1013, "Previous owned backend is not safely retired."); connection.Dispose(); return; }
                 var peer = DesktopNative.Identity(connection.Peer.Pid);
                 bool peerIsApp = peer != null && String.Equals(peer.ExecutablePath, target.AppExecutable, StringComparison.OrdinalIgnoreCase);
@@ -574,14 +594,19 @@ namespace CodexAccountSwitcher
             }
             lock (transaction.Admission)
             {
-                if (transaction.Frozen || !Authorize(connection.Peer) || !DesktopNative.Same(primaryApp) || !DesktopSessionFiles.IdentityEquals(app, primaryApp) ||
+                if (!transaction.CanAdmitMember() || !Authorize(connection.Peer) || !DesktopNative.Same(primaryApp) || !DesktopSessionFiles.IdentityEquals(app, primaryApp) ||
                     brokerOwner != null && (!DesktopNative.Same(brokerOwner) || !TrackApp(brokerOwner)))
                 { connection.Close(1008, "Managed App ownership changed during relay greeting."); connection.Dispose(); return; }
                 // Creation and admission share the transaction lock; Freeze can never omit an in-flight backend.
                 member = new DesktopBridgeMember(spec, target, connection, transaction.Generation + 1, null, continuationAdmission,
                     command => VerifyDisabledAppCommand(command, primaryApp, target.AppExecutable), appToolsPipePath);
                 member.HasVerifiedAppBroker = brokerOwner != null;
-                if (!transaction.Admit(member)) throw new InvalidOperationException("Desktop admission changed while locked.");
+                if (!transaction.Admit(member))
+                {
+                    // A peer can lose its socket while the new member is being
+                    // constructed. This member has never received App input.
+                    member.Feed.End(); connection.Dispose(); return;
+                }
                 members.Add(member);
                 // A new independently initialized connection changes the group
                 // proof. No previous chat-owner admission may survive that race.
@@ -618,8 +643,9 @@ namespace CodexAccountSwitcher
                 lock (transaction.Admission)
                 {
                     member.MarkDisconnected();
-                    if (!ownerExitCleanup && !member.Exited0) { server.Freeze(); transaction.Frozen = true; transaction.Stage = "orphaned"; }
-                    // A socket EOF never ends the backend's private input.
+                    if (!ownerExitCleanup) transaction.NoteDisconnectedMember(member);
+                    // Keep the orphan's input owned. Its disconnect does not freeze
+                    // requests on the other already authenticated App connections.
                     Persist();
                 }
             }
@@ -718,19 +744,22 @@ namespace CodexAccountSwitcher
                             // Retirement concerns only this host's retained App/backend identities.
                             // A separately reopened App still blocks auth writes, but cannot keep
                             // an otherwise empty old host alive. Freeze admission before EOF.
-                            server.Freeze(); transaction.Frozen = true;
-                            ownerExitCleanup = true;
-                            foreach (var member in members.Where(m => !m.Running.IsCompleted)) member.EndForConfirmedOwnerExit();
-                            transaction.Stage = "ownerExitCleanup";
+                            if (!ownerExitCleanup)
+                            {
+                                server.Freeze(); transaction.Frozen = true;
+                                ownerExitCleanup = true;
+                                foreach (var member in members) member.EndForConfirmedOwnerExit();
+                                transaction.Stage = "ownerExitCleanup";
+                            }
                             if (members.All(m => m.BackendExited))
                             {
                                 // Nonzero or unexpected exit releases the supervisor, not a
                                 // successful quiesce. Its snapshot remains unknown/non-idle.
-                                if (members.Any(m => !m.Exited0)) lastReason = "ownerExitedWithUnconfirmedNormalBackendExit";
+                                if (members.Any(m => !m.Retired)) lastReason = "ownerExitedWithUnconfirmedNormalBackendExit";
                                 transaction.Stage = "exited"; Persist(); break;
                             }
                         }
-                        else if (Enabled() && transaction.Stage == "orphaned") RetireIdleOrphan();
+                        else if (Enabled() && transaction.Stage == "orphaned" && !transaction.Frozen && !transaction.EofCommitted) RetireIdleOrphan();
                         Persist();
                     }
                 }
@@ -741,7 +770,7 @@ namespace CodexAccountSwitcher
         internal static bool RefreshMemberStatus(object admission, IList<IDesktopSessionMember> source)
         {
             IDesktopSessionMember[] captured;
-            lock (admission) captured = source.Where(m => !m.Exited0).ToArray();
+            lock (admission) captured = source.Where(m => !m.Retired).ToArray();
             // A query can wait on many loaded threads. Frontend startup requests must
             // retain admission while this read-only work waits for backend replies.
             bool healthy = true;
@@ -797,20 +826,22 @@ namespace CodexAccountSwitcher
         }
         private void RetireIdleOrphan()
         {
-            var orphans = members.Where(m => !m.Exited0 && m.Disconnected).ToArray();
-            if (orphans.Length == 0) return;
+            var orphans = members.Where(m => !m.Retired && m.Disconnected).ToArray();
             foreach (var orphan in orphans)
             {
-                if (!DesktopSessionFiles.Quiet(orphan.Last)) return;
+                if (!DesktopSessionFiles.Quiet(orphan.Last)) continue;
                 var prepared = orphan.Prepare();
-                if (!DesktopSessionFiles.Quiet(prepared) || !DesktopSessionFiles.Flag(prepared, "prepared") || !Enabled()) { orphan.Unprepare(); return; }
-                transaction.EofCommitted = true;
-                var result = orphan.Commit();
-                if (!DesktopSessionFiles.Quiet(result) || DesktopSessionFiles.Text(result, "state") != "quiesced" || !orphan.Exited0)
-                { transaction.Stage = "recoveryRequired"; lastReason = "orphanEofUnconfirmed"; return; }
+                if (!DesktopSessionFiles.Quiet(prepared) || !DesktopSessionFiles.Flag(prepared, "prepared") || !Enabled()) { orphan.Unprepare(); continue; }
+                // EOF here belongs to the orphan alone. A late exit can be picked up
+                // by the next status read without committing a group account switch.
+                var result = orphan.CommitWithDeadline(2000, 100);
+                if (!orphan.Exited0)
+                {
+                    lastReason = "orphanEofUnconfirmed";
+                    if (!DesktopSessionFiles.Flag(result, "eofCommitted")) orphan.Unprepare();
+                }
             }
-            transaction.Frozen = false; transaction.EofCommitted = false;
-            transaction.Stage = members.Any(m => !m.Exited0) ? "running" : "starting"; server.Unfreeze();
+            if (transaction.FinishOrphanRecovery() && (lastReason == "desktopTransportDisconnected" || lastReason == "orphanEofUnconfirmed")) lastReason = null;
         }
         internal static bool OwnedAppsExited(Process initial, ICollection<Process> tracked)
         {
@@ -826,6 +857,26 @@ namespace CodexAccountSwitcher
         {
             // Unlike host retirement, account switching also requires global App absence.
             return OwnedAppGone() && !DesktopNative.Snapshot().Any(p => String.Equals(p.ExecutablePath, target.AppExecutable, StringComparison.OrdinalIgnoreCase));
+        }
+        private void TerminateRetiringBackends(int generation, Dictionary<string, object> request)
+        {
+            lock (transaction.Admission)
+            {
+                if (generation != transaction.Generation || !ownerExitCleanup || transaction.Stage != "ownerExitCleanup" || !Enabled())
+                    throw new IOException("The closing desktop session has changed.");
+                RefreshActors();
+                if (!ConfirmedAppGone()) throw new IOException("A Codex desktop is still open.");
+                var remaining = members.Where(m => !m.BackendExited).ToArray();
+                if (request.ContainsKey("soleBackendPid") || request.ContainsKey("soleBackendStartedUtc"))
+                {
+                    int pid = DesktopSessionFiles.Count(request, "soleBackendPid");
+                    string started = DesktopSessionFiles.Text(request, "soleBackendStartedUtc");
+                    if (remaining.Length != 1 || remaining[0].Backend == null || remaining[0].Backend.Pid != pid ||
+                        remaining[0].Backend.StartedUtc != started || !DesktopNative.Same(remaining[0].Backend))
+                        throw new IOException("The single retiring backend identity has changed.");
+                }
+                foreach (var member in remaining) member.TerminateAfterOwnerExit();
+            }
         }
         private DesktopShutdownResult ShutdownApp()
         {
@@ -843,15 +894,15 @@ namespace CodexAccountSwitcher
         { return transactionStage == "quiesced" && !completeQuiescence ? "recoveryRequired" : transactionStage; }
         private DesktopSessionState Snapshot()
         {
-            var live = members.Where(m => !m.Exited0).ToArray();
+            var live = members.Where(m => !m.Retired).ToArray();
             bool backendKnown = live.Length > 0 && live.All(m => !m.UnexpectedExit && DesktopSessionFiles.Flag(m.Last, "known"));
-            bool allExited = members.Count > 0 && members.All(m => m.Exited0), gone = ConfirmedAppGone();
+            bool allExited = members.Count > 0 && members.All(m => m.Retired), gone = ConfirmedAppGone();
             bool quiesced = transaction.Stage == "quiesced" && metadataHealthy && allExited && gone;
             var actors = new List<DesktopProcessIdentity> { identity }; actors.AddRange(appRoots.Where(DesktopNative.Same));
             actors.AddRange(relayRoots.Where(DesktopNative.Same));
-            actors.AddRange(members.Where(m => m.Backend != null && !m.Exited0).Select(m => m.Backend));
+            actors.AddRange(members.Where(m => m.Backend != null && !m.Retired).Select(m => m.Backend));
             int active = live.Sum(m => Math.Max(0, DesktopSessionFiles.Count(m.Last, "activeTurns"))), pending = live.Sum(m => Math.Max(0, DesktopSessionFiles.Count(m.Last, "pendingRequests"))), background = live.Sum(m => Math.Max(0, DesktopSessionFiles.Count(m.Last, "backgroundTerminals")));
-            var failedBackend = members.LastOrDefault(m => m.BackendExited && !m.Exited0);
+            var failedBackend = members.LastOrDefault(m => m.BackendExited && !m.Retired);
             bool known = failedBackend == null && metadataHealthy && (quiesced || backendKnown && (transaction.Stage == "running" || transaction.Stage == "prepared" || transaction.Stage == "orphaned"));
             bool transportReady = live.Length > 0 && live.All(m => !m.Disconnected && m.Bridge.TransportReady) && appRoots.Any(DesktopNative.Same);
             var uncertain = live.FirstOrDefault(m => !DesktopSessionFiles.Flag(m.Last, "known"));
@@ -868,7 +919,7 @@ namespace CodexAccountSwitcher
         }
         private static string SafeBackendReason(string value)
         {
-            return new[] { "initializing", "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "backendUnavailable", "backendExitedUnexpectedly",
+            return new[] { "initializing", "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "desktopConversationLoading", "desktopResponseUnavailable", "backendUnavailable", "backendExitedUnexpectedly",
                 "backendStreamFailed", "backendWriteFailed", "unrecognizedClientProtocol", "unrecognizedBackendProtocol", "duplicateClientRequestId",
                 "unknownProcessHandle", "duplicateProcessHandle", "unknownTurn", "notificationDuringQuiesce", "catalogUnavailable", "initializeFailed" }.Contains(value) ? value : "desktopWorkStateUnknown";
         }
@@ -918,7 +969,7 @@ namespace CodexAccountSwitcher
         {
             lock (transaction.Admission)
             {
-                var live = members.Where(m => !m.Exited0).ToArray();
+                var live = members.Where(m => !m.Retired).ToArray();
                 if (!Enabled() || transaction.Generation != expectedGeneration || transaction.Stage != "running" || transaction.Frozen ||
                     live.Length == 0 || live.Length > 16 || live.Any(m => m.Disconnected || !m.Bridge.TransportReady) || app == null || !DesktopNative.Same(app))
                     throw new IOException("Continuation requires a fully connected owned desktop backend group.");
@@ -972,7 +1023,7 @@ namespace CodexAccountSwitcher
         }
         internal static bool MayWaitForReadOnlyPeer(Dictionary<string, object> status, bool onlyReadOnlyPending)
         {
-            return onlyReadOnlyPending && DesktopSessionFiles.Flag(status, "known") &&
+            return onlyReadOnlyPending && (DesktopSessionFiles.Flag(status, "known") || DesktopSessionFiles.Text(status, "reason") == "desktopConversationLoading") &&
                 DesktopSessionFiles.Count(status, "activeTurns") == 0 && DesktopSessionFiles.Count(status, "backgroundTerminals") == 0 &&
                 DesktopSessionFiles.Count(status, "pendingRequests") > 0;
         }
@@ -1172,6 +1223,7 @@ namespace CodexAccountSwitcher
                                 }
                                 else if (method == "disable")
                                 { lock (transaction.Admission) { if (expectedGeneration != transaction.Generation || Enabled()) throw new IOException("Configuration revocation was not committed."); transaction.CancelBeforeEof(); } }
+                                else if (method == "terminateRetiringBackends") TerminateRetiringBackends(expectedGeneration, request);
                                 else if (method == "restore") Restore(connected, expectedGeneration, request);
                                 else throw new IOException("Unsupported desktop method.");
                                 lock (transaction.Admission) { Persist(); response = new { id = id, result = Snapshot(), continuation = continuationResult }; }
@@ -1195,9 +1247,9 @@ namespace CodexAccountSwitcher
             lock (transaction.Admission)
             {
                 if (expectedGeneration != transaction.Generation || !Enabled() || !connected()) throw new IOException("Desktop recovery authorization or generation changed.");
-                if (!transaction.EofCommitted && members.Any(m => !m.Exited0))
+                if (!transaction.EofCommitted && members.Any(m => !m.Retired))
                 { transaction.CancelBeforeEof(); recoveryAccepted = true; Persist(); return; }
-                if (members.Any(m => !m.Exited0)) throw new IOException("Old desktop backend has not exited safely.");
+                if (members.Any(m => !m.Retired)) throw new IOException("Old desktop backend has not exited safely.");
                 if (!ConfirmedAppGone()) throw new UserError("桌面程式仍在執行，請先正常 Quit 再恢復；不會強制結束。");
                 if (request.ContainsKey("continuation"))
                 {

@@ -4,8 +4,13 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web.Script.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace CodexAccountSwitcher
 {
@@ -13,7 +18,9 @@ namespace CodexAccountSwitcher
     {
         internal const string DirectoryName = "local-history-backups";
         private const int CopyBufferSize = 1024 * 1024;
-        private const long LargeDatabaseSize = 1024L * 1024 * 1024;
+        private const string IncrementalDirectory = "incremental";
+        private const string SnapshotSuffix = ".snapshot.json";
+        private static readonly Regex Digest = new Regex(@"\A[a-z2-7]{52}\z", RegexOptions.CultureInvariant);
         private static readonly Regex DatabaseName = new Regex(
             @"^(?:state|thread_history|memories(?:_v2)?|goals)_\d+\.sqlite(?:-wal|-journal)?$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -89,83 +96,326 @@ namespace CodexAccountSwitcher
         internal static void Save(string home, string sqliteHome, string storage, Action confirmQuiet,
             CancellationToken cancellation, IProgress<int> progress)
         {
-            string temporary = null;
             try
             {
+                cancellation.ThrowIfCancellationRequested();
                 CheckLocalDirectory(home);
                 CheckLocalDirectory(sqliteHome);
                 var files = FilesToSave(home, sqliteHome);
                 if (files.Count == 0) return;
-                var stamps = files.Values.Select(FileStamp).ToArray();
-                long totalBytes = stamps.Sum(stamp => stamp.Item1);
-                long copiedBytes = 0;
-                int reported = 0, fileIndex = 0;
-                var buffer = new byte[CopyBufferSize];
-
-                string directory = Path.Combine(storage, DirectoryName);
+                string directory = Path.Combine(storage, DirectoryName, IncrementalDirectory);
                 CheckLocalDirectory(directory);
-                Files.PrivateDirectory(directory);
-                // Keep the private directory and filename within the legacy Windows path limit.
-                string archive = Path.Combine(directory, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" +
-                    Guid.NewGuid().ToString("N").Substring(0, 16) + ".zip");
-                using (var output = new FileStream(archive + ".tmp", FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                    CopyBufferSize, FileOptions.SequentialScan))
-                {
-                    temporary = archive + ".tmp";
-                    using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
-                    {
-                        foreach (var file in files)
-                        {
-                            cancellation.ThrowIfCancellationRequested();
-                            CheckRegular(file.Value);
-                            long size = stamps[fileIndex++].Item1;
-                            // Store multi-gigabyte databases directly to keep desktop downtime bounded by disk I/O.
-                            var compression = size >= LargeDatabaseSize && file.Key.StartsWith("sqlite/", StringComparison.Ordinal)
-                                ? CompressionLevel.NoCompression : CompressionLevel.Fastest;
-                            using (var source = new FileStream(file.Value, FileMode.Open, FileAccess.Read, FileShare.Read,
-                                CopyBufferSize, FileOptions.SequentialScan))
-                            using (var destination = zip.CreateEntry(file.Key, compression).Open())
-                            {
-                                int read;
-                                while ((read = source.Read(buffer, 0, buffer.Length)) != 0)
-                                {
-                                    cancellation.ThrowIfCancellationRequested();
-                                    destination.Write(buffer, 0, read);
-                                    copiedBytes += read;
-                                    int percent = totalBytes == 0 ? 0 : (int)Math.Min(99, 100.0 * copiedBytes / totalBytes);
-                                    if (progress != null && percent > reported)
-                                    {
-                                        reported = percent;
-                                        progress.Report(percent);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    cancellation.ThrowIfCancellationRequested();
-                    output.Flush(true);
-                }
-                cancellation.ThrowIfCancellationRequested();
-                confirmQuiet();
-                if (!files.SequenceEqual(FilesToSave(home, sqliteHome)) ||
-                    !stamps.SequenceEqual(files.Values.Select(FileStamp)))
-                    throw new IOException("Local history files changed while saving.");
-                cancellation.ThrowIfCancellationRequested();
-                File.Move(temporary, archive);
-                temporary = null;
+                ManagedBridge.PrivateDirectory(Path.GetDirectoryName(directory));
+                ManagedBridge.PrivateDirectory(directory);
+                string parts = Path.Combine(directory, "parts");
+                ManagedBridge.PrivateDirectory(parts);
+                using (EnterSnapshotLock(directory))
+                    SaveSnapshot(files, home, sqliteHome, directory, parts, confirmQuiet, cancellation, progress);
             }
             catch (IOException) { throw SaveFailed(); }
             catch (UnauthorizedAccessException) { throw SaveFailed(); }
+        }
+
+        private static void SaveSnapshot(SortedDictionary<string, string> files, string home, string sqliteHome,
+            string directory, string parts, Action confirmQuiet, CancellationToken cancellation, IProgress<int> progress)
+        {
+            var stamps = new Dictionary<string, SavedFile>(StringComparer.Ordinal);
+            foreach (var file in files)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                stamps.Add(file.Key, FileStamp(file.Value));
+            }
+            var previous = ReadLatest(directory);
+            var snapshot = new Snapshot { Version = 1, Files = new Dictionary<string, SavedFile>(StringComparer.Ordinal) };
+            foreach (var file in stamps)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                SavedFile earlier;
+                if (file.Value.CanReuse && previous != null && previous.Files.TryGetValue(file.Key, out earlier) &&
+                    file.Value.SameSource(earlier) && PartsAvailable(parts, earlier))
+                    snapshot.Files.Add(file.Key, earlier);
+            }
+            var changed = files.Where(file => !snapshot.Files.ContainsKey(file.Key)).ToArray();
+            long total = changed.Sum(file => stamps[file.Key].Length), readBytes = 0;
+            int reported = 0;
+            string manifest = null;
+            var added = new List<string>();
+            bool published = false;
+            try
+            {
+                if (changed.Length > 0)
+                {
+                    var buffer = new byte[CopyBufferSize];
+                    using (var sha = new SHA256Cng())
+                    foreach (var file in changed)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        var saved = stamps[file.Key];
+                        var hashes = new List<string>();
+                        using (var input = OpenSource(file.Value))
+                        {
+                            if (!saved.SameSource(FileStamp(input))) throw new IOException("Local history file changed.");
+                            long remaining = saved.Length;
+                            while (remaining > 0)
+                            {
+                                cancellation.ThrowIfCancellationRequested();
+                                int size = (int)Math.Min(remaining, buffer.Length);
+                                ReadFully(input, buffer, size);
+                                string hash = Hash(sha, buffer, size);
+                                SavePart(parts, hash, buffer, size, added, cancellation);
+                                hashes.Add(hash);
+                                remaining -= size;
+                                readBytes += size;
+                                int percent = (int)Math.Min(99, 100.0 * readBytes / total);
+                                if (progress != null && percent > reported)
+                                {
+                                    reported = percent;
+                                    progress.Report(percent);
+                                }
+                            }
+                        }
+                        saved.Parts = hashes.ToArray();
+                        snapshot.Files.Add(file.Key, saved);
+                    }
+                }
+                cancellation.ThrowIfCancellationRequested();
+                confirmQuiet();
+                if (!files.SequenceEqual(FilesToSave(home, sqliteHome)))
+                    throw new IOException("Local history files changed while saving.");
+                foreach (var file in files)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    if (!stamps[file.Key].SameSource(FileStamp(file.Value)))
+                        throw new IOException("Local history files changed while saving.");
+                }
+                if (changed.Length == 0 && previous.Files.Count == files.Count) return;
+                string name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss.fffffff", CultureInfo.InvariantCulture) +
+                    "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + SnapshotSuffix;
+                manifest = Path.Combine(directory, name + ".tmp");
+                byte[] data = Encoding.UTF8.GetBytes(Serializer().Serialize(snapshot));
+                using (var output = ManagedBridge.CreatePrivateFile(manifest))
+                {
+                    output.Write(data, 0, data.Length);
+                    output.Flush(true);
+                }
+                cancellation.ThrowIfCancellationRequested();
+                File.Move(manifest, Path.Combine(directory, name));
+                published = true;
+            }
             finally
             {
-                // Earlier completed snapshots are never replaced or pruned by a switch.
-                if (temporary != null)
+                if (!published)
                 {
-                    try { File.Delete(temporary); }
-                    catch (IOException) { }
-                    catch (UnauthorizedAccessException) { }
+                    DeleteTemporary(manifest);
+                    foreach (string path in added) DeleteTemporary(path);
                 }
             }
+        }
+
+        private static FileStream EnterSnapshotLock(string directory)
+        {
+            string path = Path.Combine(directory, "snapshot.lock");
+            if (!Exists(path))
+            {
+                try { using (ManagedBridge.CreatePrivateFile(path)) { } }
+                catch (IOException) { if (!Exists(path)) throw; }
+            }
+            CheckRegular(path);
+            return new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        }
+
+        private static void SavePart(string parts, string hash, byte[] bytes, int size, List<string> added, CancellationToken cancellation)
+        {
+            string path = PartPath(parts, hash);
+            if (PartAvailable(path, size)) return;
+            string temporary = Path.Combine(parts, Guid.NewGuid().ToString("N").Substring(0, 16) + ".tmp");
+            try
+            {
+                using (var output = ManagedBridge.CreatePrivateFile(temporary))
+                {
+                    output.Write(bytes, 0, size);
+                    output.Flush(true);
+                }
+                cancellation.ThrowIfCancellationRequested();
+                File.Move(temporary, path);
+                added.Add(path);
+            }
+            finally { DeleteTemporary(temporary); }
+        }
+
+        private static bool PartsAvailable(string parts, SavedFile file)
+        {
+            long remaining = file.Length;
+            foreach (string hash in file.Parts)
+            {
+                int size = (int)Math.Min(remaining, CopyBufferSize);
+                if (!PartAvailable(PartPath(parts, hash), size)) return false;
+                remaining -= size;
+            }
+            return true;
+        }
+
+        private static string PartPath(string directory, string hash) { return Path.Combine(directory, hash + ".part"); }
+
+        private static bool PartAvailable(string path, int size)
+        {
+            if (!Exists(path)) return false;
+            var info = new FileInfo(path);
+            if ((info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0 || info.Length != size)
+                throw new IOException("Invalid history backup part.");
+            return true;
+        }
+
+        private static void DeleteTemporary(string path)
+        {
+            if (path == null) return;
+            try { File.Delete(path); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        private static void ReadFully(Stream stream, byte[] buffer, int size)
+        {
+            int offset = 0;
+            while (offset < size)
+            {
+                int read = stream.Read(buffer, offset, size - offset);
+                if (read == 0) throw new IOException("Local history file ended early.");
+                offset += read;
+            }
+        }
+
+        private static string Hash(SHA256 sha, byte[] bytes, int size)
+        {
+            // Base32 keeps all 256 bits on case-insensitive filesystems and
+            // leaves room for nested user profiles under legacy path limits.
+            const string alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+            var result = new StringBuilder(52);
+            int window = 0, bits = 0;
+            foreach (byte value in sha.ComputeHash(bytes, 0, size))
+            {
+                window = (window << 8) | value;
+                bits += 8;
+                while (bits >= 5)
+                {
+                    bits -= 5;
+                    result.Append(alphabet[(window >> bits) & 31]);
+                }
+            }
+            if (bits > 0) result.Append(alphabet[(window << (5 - bits)) & 31]);
+            return result.ToString();
+        }
+
+        private static JavaScriptSerializer Serializer()
+        { return new JavaScriptSerializer { MaxJsonLength = 32 * 1024 * 1024 }; }
+
+        private static string LatestManifest(string directory)
+        {
+            return Directory.EnumerateFiles(directory, "*" + SnapshotSuffix)
+                .Where(path => Path.GetFileName(path).EndsWith(SnapshotSuffix, StringComparison.Ordinal))
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
+        }
+
+        private static Snapshot ReadLatest(string directory)
+        {
+            string path = LatestManifest(directory);
+            return path == null ? null : ReadSnapshot(path);
+        }
+
+        private static Snapshot ReadSnapshot(string path)
+        {
+            CheckRegular(path);
+            if (new FileInfo(path).Length > 32 * 1024 * 1024) throw new IOException("Oversized local history manifest.");
+            Snapshot snapshot;
+            try { snapshot = Serializer().Deserialize<Snapshot>(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (ArgumentException error) { throw new IOException("Invalid local history manifest.", error); }
+            catch (InvalidOperationException error) { throw new IOException("Invalid local history manifest.", error); }
+            if (snapshot == null || snapshot.Version != 1 || snapshot.Files == null)
+                throw new IOException("Unknown local history manifest format.");
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in snapshot.Files)
+            {
+                string[] segments = file.Key.Split('/');
+                SavedFile value = file.Value;
+                if (segments.Length < 2 || (segments[0] != "home" && segments[0] != "sqlite") ||
+                    segments.Any(segment => String.IsNullOrEmpty(segment) || segment.EndsWith(".", StringComparison.Ordinal) ||
+                        segment.EndsWith(" ", StringComparison.Ordinal) || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) ||
+                    !names.Add(file.Key) || value == null || value.Length < 0 || String.IsNullOrEmpty(value.Identity) ||
+                    value.Parts == null || value.Parts.LongLength != value.Length / CopyBufferSize + (value.Length % CopyBufferSize == 0 ? 0 : 1) ||
+                    value.Parts.Any(hash => hash == null || !Digest.IsMatch(hash)))
+                    throw new IOException("Invalid local history snapshot entry.");
+            }
+            return snapshot;
+        }
+
+        internal static void Export(string storage, string point, string destination)
+        {
+            string directory = Path.Combine(storage, DirectoryName, IncrementalDirectory);
+            DesktopSessionFiles.VerifyPrivate(directory, false);
+            string parts = Path.Combine(directory, "parts");
+            DesktopSessionFiles.VerifyPrivate(parts, false);
+            if (point != "latest" && (Path.GetFileName(point) != point || !point.EndsWith(SnapshotSuffix, StringComparison.Ordinal)))
+                throw new IOException("Invalid snapshot name.");
+            if (!Path.IsPathRooted(destination) || !String.Equals(Path.GetExtension(destination), ".zip", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("A full output ZIP path is required.");
+            destination = Path.GetFullPath(destination);
+            if (destination.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || Exists(destination))
+                throw new IOException("Choose a new ZIP outside the incremental backup directory.");
+            CheckLocalDirectory(Path.GetDirectoryName(destination));
+            using (EnterSnapshotLock(directory))
+            {
+                string manifest = point == "latest" ? LatestManifest(directory) : Path.Combine(directory, point);
+                if (manifest == null) throw new IOException("No incremental history snapshot exists.");
+                var snapshot = ReadSnapshot(manifest);
+                string temporary = Path.Combine(Path.GetDirectoryName(destination), "history-" + Guid.NewGuid().ToString("N") + ".tmp");
+                try
+                {
+                    using (var output = ManagedBridge.CreatePrivateFile(temporary))
+                    {
+                        using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
+                        using (var sha = new SHA256Cng())
+                        {
+                            var buffer = new byte[CopyBufferSize];
+                            foreach (var file in snapshot.Files)
+                            {
+                                long remaining = file.Value.Length;
+                                using (var entry = zip.CreateEntry(file.Key, CompressionLevel.NoCompression).Open())
+                                foreach (string hash in file.Value.Parts)
+                                {
+                                    int size = (int)Math.Min(remaining, CopyBufferSize);
+                                    using (var input = OpenSource(PartPath(parts, hash)))
+                                    {
+                                        if (input.Length != size) throw new IOException("Invalid history backup part size.");
+                                        ReadFully(input, buffer, size);
+                                    }
+                                    if (Hash(sha, buffer, size) != hash) throw new IOException("History backup part checksum changed.");
+                                    entry.Write(buffer, 0, size);
+                                    remaining -= size;
+                                }
+                            }
+                        }
+                        output.Flush(true);
+                    }
+                    File.Move(temporary, destination);
+                }
+                finally { DeleteTemporary(temporary); }
+            }
+        }
+
+        public sealed class Snapshot
+        {
+            public int Version { get; set; }
+            public Dictionary<string, SavedFile> Files { get; set; }
+        }
+
+        public sealed class SavedFile
+        {
+            public long Length { get; set; }
+            public string Identity { get; set; }
+            public string[] Parts { get; set; }
+            internal bool CanReuse { get { return Identity.Length > 0 && Identity[0] == '1'; } }
+            internal bool SameSource(SavedFile other)
+            { return Length == other.Length && Identity == other.Identity; }
         }
 
         private static SortedDictionary<string, string> FilesToSave(string home, string sqliteHome)
@@ -220,11 +470,40 @@ namespace CodexAccountSwitcher
                 throw new IOException("A local history file is not a regular on-disk file.");
         }
 
-        private static Tuple<long, long> FileStamp(string path)
+        private static FileStream OpenSource(string path)
         {
             CheckRegular(path);
-            var info = new FileInfo(path);
-            return Tuple.Create(info.Length, info.LastWriteTimeUtc.Ticks);
+            return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBufferSize, FileOptions.SequentialScan);
+        }
+
+        private static SavedFile FileStamp(string path)
+        { using (var stream = OpenSource(path)) return FileStamp(stream); }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BasicInfo
+        { public long Created, Accessed, Written, Changed; public uint Attributes; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdInfo
+        { public ulong Volume, Low, High; }
+
+        [DllImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+        private static extern bool ReadBasic(SafeFileHandle file, int kind, out BasicInfo info, uint size);
+        [DllImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+        private static extern bool ReadId(SafeFileHandle file, int kind, out FileIdInfo info, uint size);
+
+        private static SavedFile FileStamp(FileStream stream)
+        {
+            BasicInfo basic;
+            FileIdInfo id;
+            if (!ReadBasic(stream.SafeFileHandle, 0, out basic, (uint)Marshal.SizeOf(typeof(BasicInfo))) ||
+                (basic.Attributes & (uint)(FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Offline)) != 0)
+                throw new IOException("Cannot verify local history file identity.");
+            // Filesystems without a stable local file ID still use content hashing.
+            bool stable = ReadId(stream.SafeFileHandle, 18, out id, (uint)Marshal.SizeOf(typeof(FileIdInfo))) &&
+                (id.Low != 0 || id.High != 0) && basic.Changed != 0;
+            string identity = String.Format(CultureInfo.InvariantCulture, "{0}{1:x16}{2:x16}{3:x16}{4:x16}{5:x16}{6:x16}",
+                stable ? "1" : "0", id.Volume, id.Low, id.High, basic.Created, basic.Written, basic.Changed);
+            return new SavedFile { Length = stream.Length, Identity = identity };
         }
 
         private static UserError SaveFailed()

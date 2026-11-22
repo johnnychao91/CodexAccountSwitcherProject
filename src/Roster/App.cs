@@ -106,6 +106,8 @@ namespace CodexAccountSwitcher
         private readonly DispatcherTimer monitorTimer;
         private readonly DispatcherTimer desktopStartupTimer;
         private readonly CancellationTokenSource desktopStartupLifetime = new CancellationTokenSource();
+        private DesktopProcessIdentity startupPreviousApp;
+        private DesktopProcessIdentity[] startupPreviousBackends = new DesktopProcessIdentity[0];
         private AutoSwitchController automatic;
         private RuntimeCoordinator runtimes;
         private DesktopContinuationWorkflow continuation;
@@ -154,6 +156,7 @@ namespace CodexAccountSwitcher
             Click("CancelButton", async delegate { if (cancellation != null) cancellation.Cancel(); else await SetMonitoring(false); });
             Click("BrowserButton", delegate { Guard(OpenBrowser); });
             Click("RuntimeButton", async delegate { await InspectRuntimes(); });
+            Click("RetireBackendButton", async delegate { await RunManual(TerminateRetiringBackend, preserveMonitoring: true); });
             Click("DesktopControlButton", delegate { Guard(ShowDesktopControl); });
             Click("IntegrationButton", delegate { Guard(ShowIntegration); });
             Element<CheckBox>("MonitorCheck").Checked += async delegate { if (!suppressMonitorChange) await SetMonitoring(true); };
@@ -244,7 +247,7 @@ namespace CodexAccountSwitcher
                 WaitForRuntimeExit = async token =>
                 {
                     await runtimes.WaitForExitAsync(vault.Data.AllowInterrupt,
-                        text => Window.Dispatcher.Invoke(new Action(() => Element<TextBlock>("AutoStatus").Text = "等待切換：\n" + text)), token);
+                        text => Window.Dispatcher.Invoke(new Action(() => Element<TextBlock>("AutoStatus").Text = "等待切換：\n" + text)), token, TryRecoverStartupBackend);
                     continuation.MarkQuiesced();
                 },
                 ConfirmRuntimeQuiet = runtimes.ConfirmQuietAsync,
@@ -496,7 +499,10 @@ namespace CodexAccountSwitcher
             Element<Button>("RuntimeButton").IsEnabled = false;
             try
             {
-                var result = await runtimes.InspectAsync(CancellationToken.None); Status(result.Describe());
+                var result = await runtimes.InspectAsync(CancellationToken.None);
+                int pid = result.Unmanaged.Count == 0 ? 0 : await WithUnmanagedDesktop(CancellationToken.None, app => app.Pid);
+                Status(result.Describe() + (pid > 0 ? "\n可核對的一般 Codex App：PID " + pid + "。" :
+                    result.Unmanaged.Count > 0 ? "\n目前程序無法核對為單一可自動關閉的 Codex 桌面。" : ""));
                 await RefreshDesktopControlState();
                 await RefreshContinuationCompatibility();
             }
@@ -587,6 +593,16 @@ namespace CodexAccountSwitcher
                     {
                         desktopConnectionText = desktopConnected ? "已連線，其他 Codex 仍在運作" :
                             startupQuitRequested ? "等待 Codex 收尾或從選單結束" : "等待現有 Codex 正常退出";
+                        if (!desktopConnected && processes.Count > 0 && processes.Count <= 2)
+                        {
+                            bool recovered = false;
+                            await RunManual(async () =>
+                            {
+                                recovered = await TryRecoverStartupBackend(deadline.Token);
+                                if (recovered) await StartDesktopControlCore(waitForExit: true);
+                            }, preserveMonitoring: true);
+                            if (recovered) return;
+                        }
                         if (!desktopConnected && !startupQuitRequested && processes.Count > 0 && processes.All(p => p.Kind == "Desktop"))
                             await RunManual(() => TryQuitUnmanagedDesktop(deadline.Token), preserveMonitoring: true);
                         return;
@@ -600,10 +616,33 @@ namespace CodexAccountSwitcher
         }
         private async Task TryQuitUnmanagedDesktop(CancellationToken token)
         {
-            var quit = await Task.Run(async () =>
+            var quit = await RequestUnmanagedDesktopQuit(token, rememberStartupOwner: true);
+            if (quit == null) return;
+            startupQuitRequested = true;
+            if (!quit.Success)
             {
+                Status("Codex 尚未正常退出。請從 Codex 選單選「結束」，Roster 會接著連線。");
+                return;
+            }
+            await StartDesktopControlCore(waitForExit: true);
+        }
+        private Task<DesktopShutdownResult> RequestUnmanagedDesktopQuit(CancellationToken token, bool rememberStartupOwner = false)
+        {
+            if (!runtimes.Desktop.ControlRequested) return Task.FromResult<DesktopShutdownResult>(null);
+            return WithUnmanagedDesktop(token, app =>
+            {
+                runtimes.Desktop.ValidateLaunchPrerequisites(app.ExecutablePath);
+                token.ThrowIfCancellationRequested();
+                return runtimes.Desktop.ControlRequested ? DesktopNative.Shutdown(app) : null;
+            }, rememberStartupOwner);
+        }
+        private Task<T> WithUnmanagedDesktop<T>(CancellationToken token, Func<DesktopProcessIdentity, T> action, bool rememberStartupOwner = false)
+        {
+            return Task.Run(async () =>
+            {
+                token.ThrowIfCancellationRequested();
                 string executable = Installation.DesktopExe();
-                if (String.IsNullOrEmpty(executable)) return null;
+                if (String.IsNullOrEmpty(executable)) return default(T);
                 var states = await runtimes.Desktop.InspectAsync(token).ConfigureAwait(false);
                 var blockers = ProcessInspector.Inspect();
                 var actors = DesktopNative.Snapshot();
@@ -613,22 +652,64 @@ namespace CodexAccountSwitcher
                     {
                         var app = DesktopAutoStart.FindUnmanagedApp(states, blockers, actors, executable, current.SessionId,
                             DesktopNative.Same, DesktopNative.HasAppWindow);
-                        if (app == null) return null;
-                        runtimes.Desktop.ValidateLaunchPrerequisites(executable);
-                        token.ThrowIfCancellationRequested();
-                        return runtimes.Desktop.ControlRequested ? DesktopNative.Shutdown(app) : null;
+                        if (app != null && rememberStartupOwner)
+                        {
+                            var target = DesktopPackageTarget.Resolve(executable);
+                            startupPreviousApp = app;
+                            startupPreviousBackends = actors.Where(actor => String.Equals(actor.ExecutablePath, target.CliExecutable, StringComparison.OrdinalIgnoreCase) &&
+                                blockers.Any(b => b.Pid == actor.Pid)).ToArray();
+                        }
+                        return app == null ? default(T) : action(app);
                     }
                 }
                 finally { DisposeDesktopActors(actors); }
             }, token);
-            if (quit == null) return;
-            startupQuitRequested = true;
-            if (!quit.Success)
+        }
+        private Task<bool> TryRecoverStartupBackend(CancellationToken token)
+        {
+            return Task.Run(async () =>
             {
-                Status("Codex 尚未正常退出。請從 Codex 選單選「結束」，Roster 會接著連線。");
-                return;
-            }
-            await StartDesktopControlCore(waitForExit: true);
+                if (!runtimes.Desktop.ControlRequested) return false;
+                var blockers = ProcessInspector.Inspect();
+                if (blockers.Count == 0 || blockers.Count > 2) return false;
+                var states = await runtimes.Desktop.InspectAsync(token).ConfigureAwait(false);
+                if (states.Count > 1) return false;
+                var previous = states.SingleOrDefault();
+                var closing = previous != null && previous.CanRecoverOwnerExit && DesktopNative.Same(previous.Host) ? previous : null;
+                string executable = Installation.DesktopExe();
+                if (String.IsNullOrEmpty(executable)) return false;
+                var target = DesktopPackageTarget.Resolve(executable);
+                var actors = DesktopNative.Snapshot();
+                try
+                {
+                    var backend = DesktopAutoStart.FindStartupRecoveryBackend(blockers, actors, target, previous, startupPreviousApp,
+                        startupPreviousBackends, DesktopNative.Same, DesktopNative.ConfirmedExited);
+                    if (backend == null) return false;
+                    runtimes.Desktop.ValidateLaunchPrerequisites(executable);
+                    token.ThrowIfCancellationRequested();
+                    if (!runtimes.Desktop.ControlRequested) return false;
+                    if (closing != null) await runtimes.Desktop.TerminateRetiringBackendsAsync(closing, token, backend).ConfigureAwait(false);
+                    else
+                    {
+                        // Rescan before taking the termination handle. A newly opened App
+                        // or another backend invalidates a single-process recovery.
+                        var currentSessions = await runtimes.Desktop.InspectAsync(token).ConfigureAwait(false);
+                        if (currentSessions.Count > 1) return false;
+                        var fresh = DesktopNative.Snapshot();
+                        try
+                        {
+                            var confirmed = DesktopAutoStart.FindStartupRecoveryBackend(ProcessInspector.Inspect(), fresh, target,
+                                currentSessions.SingleOrDefault(), startupPreviousApp, startupPreviousBackends, DesktopNative.Same, DesktopNative.ConfirmedExited);
+                            if (!DesktopNative.Equal(backend, confirmed)) return false;
+                            token.ThrowIfCancellationRequested();
+                            if (!runtimes.Desktop.ControlRequested || !DesktopNative.TerminateVerified(backend)) return false;
+                        }
+                        finally { DisposeDesktopActors(fresh); }
+                    }
+                    return true;
+                }
+                finally { DisposeDesktopActors(actors); }
+            }, token);
         }
         private static void DisposeDesktopActors(IEnumerable<DesktopProcessIdentity> actors)
         {
@@ -653,8 +734,12 @@ namespace CodexAccountSwitcher
                 {
                     try
                     {
-                        await Task.Run(() => DesktopFirstEnableWaiter.WaitAsync(() => Task.FromResult(ProcessInspector.Inspect()),
-                            null, cancellation.Token, TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20)));
+                        await DesktopFirstEnableWaiter.WaitAsync(async () =>
+                        {
+                            await TryRecoverStartupBackend(cancellation.Token).ConfigureAwait(false);
+                            return ProcessInspector.Inspect();
+                        },
+                            null, cancellation.Token, TimeSpan.FromMilliseconds(700), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(20));
                     }
                     catch (UserError)
                     {
@@ -665,7 +750,7 @@ namespace CodexAccountSwitcher
                     }
                 }
                 await runtimes.Desktop.OpenManagedAsync(executable,
-                    text => Window.Dispatcher.Invoke(new Action(() => Status(text))), cancellation.Token);
+                    text => Window.Dispatcher.Invoke(new Action(() => Status(text))), cancellation.Token, TryRecoverStartupBackend);
                 using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token))
                 {
                     deadline.CancelAfter(TimeSpan.FromSeconds(15));
@@ -798,6 +883,18 @@ namespace CodexAccountSwitcher
             dialog.Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             return dialog;
         }
+        private async Task TerminateRetiringBackend()
+        {
+            var token = desktopStartupLifetime.Token;
+            var states = await runtimes.Desktop.InspectAsync(token);
+            if (states.Count != 1 || !states[0].CanRecoverOwnerExit)
+                throw new UserError("沒有單一可核對且桌面已退出的舊 Codex 後端。");
+            if (MessageBox.Show(Window, "強制結束已關閉桌面的舊後端，可能中斷該後端尚未完成的工作。要繼續嗎？",
+                "結束舊 Codex 後端", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+            await runtimes.Desktop.TerminateRetiringBackendsAsync(states[0], token);
+            Status("舊 Codex 後端已退出。可重試切換帳號或開啟 Codex。");
+        }
+
         private void AddRecoveryButton(Window dialog, StackPanel panel)
         {
             var recover = new Button { Content = "恢復已暫停的桌面／VS Code", Margin = new Thickness(0, 18, 0, 0), Padding = new Thickness(12, 8, 12, 8), IsEnabled = !demo && runtimes != null };
@@ -857,6 +954,7 @@ namespace CodexAccountSwitcher
             Element<Button>("ContinueDesktopButton").IsEnabled = (demo || vault != null) && operationsReady && !autoRunning;
             UpdateContinuationButton();
             Element<Button>("RuntimeButton").IsEnabled = !demo && vault != null && operationsReady && !autoRunning;
+            Element<Button>("RetireBackendButton").IsEnabled = !demo && runtimes != null && operationsReady && !autoRunning;
             Element<Button>("DesktopControlButton").IsEnabled = (demo || runtimes != null) && operationsReady && !autoRunning;
             Element<Button>("IntegrationButton").IsEnabled = operationsReady && !autoRunning;
             UpdateDesktopControlIndicator();
@@ -1059,7 +1157,7 @@ namespace CodexAccountSwitcher
             if (busy || vault == null) return;
             busy = true; cancellation = new CancellationTokenSource();
             Element<Button>("BrowserButton").Visibility = Visibility.Collapsed; UpdateButtons();
-            bool applied = false, waiting = false, recovered = false;
+            bool applied = false, waiting = false, recovered = false, closedUnmanaged = false;
             try
             {
                 Account target = Account.Parse(raw);
@@ -1069,8 +1167,10 @@ namespace CodexAccountSwitcher
                 if (desktop == null || !File.Exists(desktop)) desktop = Installation.DesktopExe();
                 waiting = true;
                 Status("正在檢查工作狀態。確認閒置後，會自動關閉受管 Codex 後端並套用選取帳號。");
+                    var quit = await RequestUnmanagedDesktopQuit(cancellation.Token, rememberStartupOwner: true);
+                closedUnmanaged = quit != null && quit.Success;
                 await runtimes.WaitForManualExitAsync(
-                    text => Window.Dispatcher.Invoke(new Action(() => Status("尚未套用選取帳號。\n" + text + "\n手動切換會等待對話與背景工作結束，再自動關閉受管後端；可按取消。"))), cancellation.Token);
+                    text => Window.Dispatcher.Invoke(new Action(() => Status("尚未套用選取帳號。\n" + text + "\n手動切換會等待對話與背景工作結束，再自動關閉受管後端；可按取消。"))), cancellation.Token, TryRecoverStartupBackend);
                 var token = cancellation.Token;
                 Status("正在備份本機對話與記憶，可按取消。");
                 var progress = new Progress<int>(percent =>
@@ -1099,7 +1199,11 @@ namespace CodexAccountSwitcher
             }
             if (waiting && !recovered)
             {
-                try { await runtimes.RestoreAsync(); }
+                try
+                {
+                    await runtimes.RestoreAsync();
+                    if (closedUnmanaged) await runtimes.LaunchDesktopAsync(desktop);
+                }
                 catch { manualFailed = true; Status("程式恢復未完成，請檢查桌面整合或手動重新載入 VS Code。"); }
             }
             finishingSwitch = false; busy = false; cancellation.Dispose(); cancellation = null; UpdateButtons();
@@ -1148,7 +1252,7 @@ namespace CodexAccountSwitcher
         private static string DiagnosticReason(string reason)
         {
             if (String.IsNullOrEmpty(reason)) return null;
-            string[] known = { "initializing", "backendUnavailable", "runtimeQueryUnavailable", "runtimeChangedDuringQuery",
+            string[] known = { "initializing", "backendUnavailable", "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "desktopConversationLoading", "desktopResponseUnavailable",
                 "runtimeQueryInvalid", "runtimeQueryTimeout", "unrecognizedClientProtocol", "duplicateClientRequestId",
                 "unknownProcessHandle", "duplicateProcessHandle", "notificationDuringQuiesce", "backendWriteFailed",
                 "backendStreamFailed", "backendExitedUnexpectedly", "unrecognizedBackendProtocol", "unknownTurn", "initializeFailed", "catalogUnavailable", "preparedRuntimeChanged",
@@ -1195,6 +1299,16 @@ namespace CodexAccountSwitcher
         private static int Main(string[] args)
         {
             if (args.Length == 1 && args[0] == "--desktop-diagnostics") return RunDesktopDiagnostics();
+            if (args.Length == 3 && args[0] == "--export-history")
+            {
+                try
+                {
+                    string storage = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexAccountSwitcher");
+                    LocalCodexSnapshot.Export(storage, args[1], args[2]);
+                    return 0;
+                }
+                catch { return 1; }
+            }
             if (args.Length == 2 && args[0] == "--self-test") return SelfTests.Run(args[1]);
             if (args.Length == 2 && args[0] == "--preview")
             { var app = new Application(); new MainView(true).Render(args[1]); return 0; }

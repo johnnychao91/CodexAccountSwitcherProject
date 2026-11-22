@@ -32,6 +32,13 @@ namespace CodexAccountSwitcher
                     (states, items, actors) => DesktopAutoStart.FindUnmanagedApp(states, items, actors, path, 1, a => true, a => a.Pid == 110);
                 var empty = new DesktopSessionState[0]; var blockers = new[] { blocker(110), blocker(111) };
                 Check(find(empty, blockers, new[] { app, child }) == app, "Verified child prevented App selection.");
+                blockers[0].CreationTime = "20251231183000.000000-330";
+                blockers[1].CreationTime = "20260101084500.000000+525";
+                Check(find(empty, blockers, new[] { app, child }) == app, "Different WMI offsets changed the same UTC identity.");
+                blockers[0].CreationTime = "20251231183000.000000-360";
+                Check(find(empty, blockers, new[] { app, child }) == null, "A different UTC creation time was accepted.");
+                blockers[0] = blocker(110);
+                blockers[1] = blocker(111);
                 child.ParentIdentity = null; child.ParentPid = 999;
                 Check(find(empty, blockers, new[] { app, child }) == null, "Unrelated desktop blocker was accepted.");
                 child.ParentPid = 110; child.ParentIdentity = app; child.StartedUtc = "2025-01-01T00:00:00Z";
@@ -49,6 +56,46 @@ namespace CodexAccountSwitcher
                     "An App without a window was accepted.");
                 Check(DesktopAutoStart.FindUnmanagedApp(empty, new[] { blocker(110) }, new[] { app }, path, 1, a => { throw new Exception(); }, a => true) == null,
                     "Failed identity probe was accepted.");
+            });
+            test("Desktop startup recovery requires the sole original backend and a confirmed closed owner", delegate
+            {
+                var target = new DesktopPackageTarget { AppExecutable = System.IO.Path.GetFullPath(@"fixture\ChatGPT.exe"),
+                    CliExecutable = System.IO.Path.GetFullPath(@"fixture\codex.exe") };
+                var app = new DesktopProcessIdentity { Pid = 310, StartedUtc = "2026-01-01T00:00:00Z", ExecutablePath = target.AppExecutable };
+                var backend = new DesktopProcessIdentity { Pid = 311, ParentPid = app.Pid, StartedUtc = "2026-01-01T00:00:01Z", ExecutablePath = target.CliExecutable };
+                var blocker = Process(backend.Pid, "Desktop"); blocker.CreationTime = "20260101000001.000000+000";
+                Check(DesktopAutoStart.FindSoleBackend(new[] { blocker }, new[] { backend }, target) == backend &&
+                    DesktopAutoStart.BelongsToClosedApp(backend, app, new[] { backend }, actor => actor == app), "The original closed App's backend was not recovered.");
+                Check(!DesktopAutoStart.BelongsToClosedApp(backend, app, new[] { backend }, actor => false) &&
+                    !DesktopAutoStart.BelongsToClosedApp(backend, app, new DesktopProcessIdentity[0], actor => true), "An open or unobserved owner authorized recovery.");
+                Check(DesktopAutoStart.FindSoleBackend(new[] { blocker }, new[] { app, backend }, target) == null &&
+                    DesktopAutoStart.FindSoleBackend(new[] { blocker, Process(313, "VSCode") }, new[] { backend }, target) == null,
+                    "A new window or unrelated blocker allowed recovery.");
+                blocker.CreationTime = "20260101000002.000000+000";
+                Check(DesktopAutoStart.FindSoleBackend(new[] { blocker }, new[] { backend }, target) == null, "A reused PID allowed recovery.");
+            });
+            test("Queued desktop recovery identifies one old backend under a still-live retiring host", delegate
+            {
+                var target = new DesktopPackageTarget { AppExecutable = System.IO.Path.GetFullPath(@"fixture\ChatGPT.exe"),
+                    CliExecutable = System.IO.Path.GetFullPath(@"fixture\codex.exe") };
+                var host = new DesktopProcessIdentity { Pid = 620, StartedUtc = "2026-01-01T00:00:00Z",
+                    ExecutablePath = System.IO.Path.GetFullPath(@"fixture\previous-release\DesktopRuntimeHost.exe") };
+                var backend = new DesktopProcessIdentity { Pid = 621, ParentPid = host.Pid, ParentIdentity = host,
+                    StartedUtc = "2026-01-01T00:00:01Z", ExecutablePath = target.CliExecutable };
+                var app = new DesktopProcessIdentity { Pid = 622, StartedUtc = "2026-01-01T00:00:02Z", ExecutablePath = target.AppExecutable };
+                var state = new DesktopSessionState { Host = host, App = app, State = "unknown", RetirementRecorded = true,
+                    Reason = "previousInstallationStillRunning", OwnedActors = new List<DesktopProcessIdentity> { host, backend } };
+                var blocker = Process(backend.Pid, "Desktop"); blocker.CreationTime = "20260101000001.000000+000";
+                var blockers = new[] { Process(host.Pid, "Integration"), blocker };
+                Func<IList<DesktopProcessIdentity>, Func<DesktopProcessIdentity, bool>, DesktopProcessIdentity> find = (actors, gone) =>
+                    DesktopAutoStart.FindStartupRecoveryBackend(blockers, actors, target, state, null, null, actor => actor != app, gone);
+                Check(find(new[] { host, backend }, actor => actor == app) == backend, "Legacy recovery did not select only the original backend.");
+                Check(find(new[] { host, backend, app }, actor => true) == null && find(new[] { host, backend }, actor => false) == null,
+                    "A live or unconfirmed App allowed cleanup.");
+                backend.ParentIdentity = null;
+                Check(find(new[] { host, backend }, actor => actor == app) == null, "A PID without its verified parent allowed cleanup.");
+                backend.ParentIdentity = host; state.RetirementRecorded = false;
+                Check(find(new[] { host, backend }, actor => actor == app) == null, "An unknown host stage allowed cleanup.");
             });
             test("Desktop startup keeps an explicit off preference without probing or launching", delegate
             {

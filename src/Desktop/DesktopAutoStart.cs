@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace CodexAccountSwitcher
@@ -37,15 +38,13 @@ namespace CodexAccountSwitcher
                 var verified = new List<DesktopProcessIdentity>();
                 foreach (var blocker in candidates)
                 {
-                    DesktopProcessIdentity actor; DateTimeOffset started; DateTime creation;
+                    DesktopProcessIdentity actor; DateTimeOffset started, creation;
                     if (!byPid.TryGetValue(blocker.Pid, out actor) || actor.SessionId != sessionId ||
                         String.IsNullOrWhiteSpace(actor.ExecutablePath) ||
                         !DateTimeOffset.TryParse(actor.StartedUtc, System.Globalization.CultureInfo.InvariantCulture,
                             System.Globalization.DateTimeStyles.RoundtripKind, out started) ||
-                        String.IsNullOrWhiteSpace(blocker.CreationTime)) return null;
-                    try { creation = System.Management.ManagementDateTimeConverter.ToDateTime(blocker.CreationTime).ToUniversalTime(); }
-                    catch { return null; }
-                    if (creation.Ticks / 10 != started.UtcDateTime.Ticks / 10 || !live(actor)) return null;
+                        !TryReadWmiCreation(blocker.CreationTime, out creation)) return null;
+                    if (creation.UtcDateTime.Ticks / 10 != started.UtcDateTime.Ticks / 10 || !live(actor)) return null;
                     verified.Add(actor);
                 }
                 var apps = verified.Where(a => String.Equals(System.IO.Path.GetFullPath(a.ExecutablePath), target,
@@ -76,6 +75,60 @@ namespace CodexAccountSwitcher
                 return app;
             }
             catch { return null; }
+        }
+
+        private static bool TryReadWmiCreation(string value, out DateTimeOffset result)
+        {
+            result = default(DateTimeOffset);
+            DateTime clock;
+            int minutes;
+            // DMTF carries its own UTC offset. Compare directly against FILETIME;
+            // a conversion through local time can lose the offset in a DST fold.
+            if (value == null || value.Length != 25 || (value[21] != '+' && value[21] != '-') ||
+                !DateTime.TryParseExact(value.Substring(0, 21), "yyyyMMddHHmmss.ffffff", CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out clock) ||
+                !Int32.TryParse(value.Substring(22), NumberStyles.None, CultureInfo.InvariantCulture, out minutes) || minutes > 840)
+                return false;
+            result = new DateTimeOffset(clock, TimeSpan.FromMinutes(value[21] == '-' ? -minutes : minutes));
+            return true;
+        }
+        internal static DesktopProcessIdentity FindSoleBackend(IList<ProcessBlocker> blockers, IList<DesktopProcessIdentity> actors, DesktopPackageTarget target,
+            DesktopProcessIdentity host = null)
+        {
+            if (blockers == null || blockers.Count != 1 || blockers[0].Kind != "Desktop" || actors == null || target == null ||
+                actors.Any(a => String.Equals(a.ExecutablePath, target.AppExecutable, StringComparison.OrdinalIgnoreCase))) return null;
+            var blocker = blockers[0];
+            if (actors.Any(actor => actor.Pid != blocker.Pid && !DesktopNative.Equal(actor, host))) return null;
+            var backends = actors.Where(actor => actor.Pid == blocker.Pid &&
+                String.Equals(actor.ExecutablePath, target.CliExecutable, StringComparison.OrdinalIgnoreCase)).ToArray();
+            DateTimeOffset born, reported;
+            return backends.Length == 1 && TryReadWmiCreation(blocker.CreationTime, out reported) &&
+                DateTimeOffset.TryParse(backends[0].StartedUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out born) &&
+                born.UtcDateTime.Ticks / 10 == reported.UtcDateTime.Ticks / 10 ? backends[0] : null;
+        }
+
+        internal static bool BelongsToClosedApp(DesktopProcessIdentity candidate, DesktopProcessIdentity app,
+            IList<DesktopProcessIdentity> owned, Func<DesktopProcessIdentity, bool> exited)
+        {
+            return candidate != null && app != null && owned != null && owned.Any(actor => DesktopNative.Equal(actor, candidate)) && exited(app);
+        }
+
+        internal static DesktopProcessIdentity FindStartupRecoveryBackend(IList<ProcessBlocker> blockers, IList<DesktopProcessIdentity> actors,
+            DesktopPackageTarget target, DesktopSessionState previous, DesktopProcessIdentity observedApp, IList<DesktopProcessIdentity> observedBackends,
+            Func<DesktopProcessIdentity, bool> live, Func<DesktopProcessIdentity, bool> exited)
+        {
+            if (blockers == null || blockers.Count == 0 || blockers.Count > 2) return null;
+            var host = previous != null && previous.IsRetiringOwner && previous.Host != null && live(previous.Host) &&
+                String.Equals(System.IO.Path.GetFileName(previous.Host.ExecutablePath), "DesktopRuntimeHost.exe", StringComparison.OrdinalIgnoreCase) ? previous.Host : null;
+            var scoped = host == null ? blockers : blockers.Where(p => p.Kind != "Integration" || p.Pid != host.Pid).ToList();
+            var backend = FindSoleBackend(scoped, actors, target, host);
+            if (backend == null || !live(backend)) return null;
+            if (previous == null) return BelongsToClosedApp(backend, observedApp, observedBackends, exited) ? backend : null;
+            if (!BelongsToClosedApp(backend, previous.App, previous.OwnedActors, exited)) return null;
+            // A live legacy host can drain after its original child exits. Keep it
+            // outside the termination scope and verify the actual parent identity.
+            if (host == null) return exited(previous.Host) ? backend : null;
+            return backend.ParentPid == host.Pid && DesktopNative.Equal(backend.ParentIdentity, host) ? backend : null;
         }
 
         // This decides whether startup should request an ordinary guarded launch.

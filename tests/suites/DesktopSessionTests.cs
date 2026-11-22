@@ -781,6 +781,37 @@ namespace CodexAccountSwitcher
                 }
                 if (live.Lifetime != null) live.Lifetime.Dispose();
             });
+            test("Explicit managed open retries backend recovery during its queued wait", delegate
+            {
+                var dead = DeadCatalogIdentity(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopRuntimeHost.exe"));
+                using (var fixture = new RecordFixture(dead, dead))
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    fixture.Client.SetControlRequested(true);
+                    string before = DesktopSessionFiles.ReadPrivateText(fixture.Configuration);
+                    int attempts = 0; var reports = new List<string>(); bool cancelled = false;
+                    var client = new DesktopSessionClient(fixture.Root, fixture.Root,
+                        () => attempts < 2 ? new List<ProcessBlocker> { FirstEnableDesktop(48602) } : new List<ProcessBlocker>(),
+                        exe => new DesktopPackageTarget());
+                    try
+                    {
+                        client.OpenManagedAsync("synthetic-app", message =>
+                        {
+                            reports.Add(message);
+                            if (message.StartsWith("相關程序已退出", StringComparison.Ordinal)) cancellation.Cancel();
+                        }, cancellation.Token, token =>
+                        {
+                            token.ThrowIfCancellationRequested();
+                            return Task.FromResult(++attempts == 2);
+                        }).GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException) { cancelled = true; }
+                    Check(cancelled && attempts == 3 && reports.Any(message => message.Contains("48602")) &&
+                        reports.Any(message => message.StartsWith("已要求結束舊 Codex 後端", StringComparison.Ordinal)),
+                        "The explicit queue did not retry cleanup or skipped confirmation after recovery.");
+                    Check(before == DesktopSessionFiles.ReadPrivateText(fixture.Configuration), "A cancelled queued open rewrote authorization.");
+                }
+            });
             test("Explicit managed open preserves a saved off preference before inspecting or validating launch", delegate
             {
                 var dead = DeadCatalogIdentity(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DesktopRuntimeHost.exe"));
@@ -1066,7 +1097,7 @@ namespace CodexAccountSwitcher
             internal SocketFixture(string fakeApp, string fakeBackend, string mode)
             {
                 Root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-desktop-" + Guid.NewGuid().ToString("N")); DesktopSessionFiles.CreatePrivate(Root); Marker = Path.Combine(Root, "owner-marker");
-                expectedBackendExit = mode == "bad-exit" || mode == "unexpected-exit" ? 7 : 0;
+                expectedBackendExit = mode == "stubborn-owner-exit" ? -1 : mode == "bad-exit" || mode == "unexpected-exit" ? 7 : 0;
                 try
                 {
                 string config = Path.Combine(Root, "authorization.json"); DesktopSessionFiles.Write(config, new { Enabled = true, AuthorizationGeneration = "private-fixture" });
@@ -1122,7 +1153,7 @@ namespace CodexAccountSwitcher
             internal int Turns, Pending, Background, PrepareCalls, CommitCalls, UnprepareCalls;
             internal Action OnPrepare;
             internal Action OnStatus;
-            public bool Exited0 { get { return Gone; } }
+            public bool Retired { get { return Gone; } }
             public bool Disconnected { get { return Orphan; } }
             public Dictionary<string, object> Status()
             {
@@ -1525,6 +1556,22 @@ namespace CodexAccountSwitcher
                 var orphan = new Member { Orphan = true, Turns = 1 }; var h = new Harness(orphan);
                 Check(!h.Session.Admit(new Member()) && !orphan.Gone && orphan.CommitCalls == 0, "A busy orphan was replaced or EOFed.");
             });
+            test("An orphaned desktop channel leaves the other conversation channel open", delegate
+            {
+                var chat = new Member(); var other = new Member(); var h = new Harness(chat, other);
+                other.Orphan = true; other.Pending = 1; h.Session.NoteDisconnectedMember(other);
+                int rejects = 0;
+                var read = ManagedBridge.Parse("{\"id\":1,\"method\":\"thread/read\"}");
+                Check(DesktopRuntimeHost.EnterFrontendAdmission(h.Session, read, id => rejects++), "The surviving chat could not request history.");
+                Monitor.Exit(h.Session.Admission);
+                Check(rejects == 0 && h.Session.Stage == "orphaned" && !h.Session.CanAdmitMember() && !h.Close() && h.Shutdowns == 0,
+                    "A lost peer blocked live history or permitted an unsafe account switch.");
+                h.Session.Frozen = true; other.Gone = true;
+                Check(!h.Session.FinishOrphanRecovery() && h.Session.Frozen, "Orphan recovery removed a switch barrier.");
+                h.Session.Frozen = false;
+                Check(h.Session.FinishOrphanRecovery() && h.Session.Stage == "running" && h.Session.CanAdmitMember(),
+                    "A confirmed late orphan exit did not restore peer admission.");
+            });
             test("Desktop separate owned connections never replace the still-live first backend", delegate
             {
                 var old = new Member(); var h = new Harness(old); var account = new Member();
@@ -1716,6 +1763,56 @@ namespace CodexAccountSwitcher
                             Freeze = () => { }, Unfreeze = () => { }, Persist = () => { }, Shutdown = () => { closes++; return new DesktopShutdownResult { Success = true, ExitCode = 0 }; } };
                         transaction.Admit(fixture.Member);
                         Check(!transaction.Quiesce(() => true) && transaction.Stage != "quiesced" && closes == 0, "Retirement became permission to change accounts.");
+                    }
+                });
+                test("Desktop owner retirement observes exit even when its bridge catalog stays locked", delegate
+                {
+                    using (var fixture = new SocketFixture(app, backend, "idle"))
+                    {
+                        var catalog = Path.Combine(fixture.Root, "members", "1", fixture.Member.Bridge.InstanceId + ".json");
+                        using (File.Open(catalog, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        {
+                            File.WriteAllText(fixture.Marker + ".stop", "normal-owner-exit");
+                            Check(fixture.App.WaitForExit(5000), "Fixture owner did not exit.");
+                            fixture.Member.EndForConfirmedOwnerExit();
+                            Check(fixture.Member.Running.Wait(7000) && fixture.Member.BackendExited && fixture.Member.Exited0 && File.Exists(catalog),
+                                "A locked catalog hid positive process exit evidence.");
+                        }
+                    }
+                });
+                test("Idle switch retires a verified backend that stays open after stdin EOF", delegate
+                {
+                    using (var fixture = new SocketFixture(app, backend, "stubborn-owner-exit"))
+                    {
+                        Check(DesktopSessionFiles.Flag(fixture.Member.Prepare(), "prepared"), "Fixture did not get an idle lease.");
+                        var result = fixture.Member.CommitForShutdown(() => true, 7000);
+                        Check(DesktopSessionFiles.Quiet(result) && fixture.Member.Retired && !fixture.Member.Exited0 && !fixture.App.HasExited,
+                            "Idle fallback did not retire the exact backend, or it misclassified the exit.");
+                    }
+                });
+                test("Idle switch termination refuses a busy member and does not signal its App", delegate
+                {
+                    using (var fixture = new SocketFixture(app, backend, "active"))
+                    {
+                        Check(!DesktopSessionFiles.Flag(fixture.Member.Prepare(), "prepared") &&
+                            Rejected(() => fixture.Member.CommitForShutdown(() => true, 4000)) && !fixture.Member.BackendExited && !fixture.App.HasExited,
+                            "A busy backend was eligible for termination.");
+                    }
+                });
+                test("Explicit owner-exit recovery terminates only its lingering fixture backend", delegate
+                {
+                    using (var fixture = new SocketFixture(app, backend, "stubborn-owner-exit"))
+                    using (var unrelated = Process.GetCurrentProcess())
+                    {
+                        Check(Rejected(fixture.Member.TerminateAfterOwnerExit) && !fixture.Member.BackendExited && !fixture.App.HasExited,
+                            "Recovery accepted a live owner.");
+                        File.WriteAllText(fixture.Marker + ".stop", "normal-owner-exit");
+                        Check(fixture.App.WaitForExit(5000), "Fixture owner did not exit.");
+                        fixture.Member.EndForConfirmedOwnerExit();
+                        Check(!fixture.Member.Running.Wait(250), "No backend remained for explicit recovery.");
+                        fixture.Member.TerminateAfterOwnerExit();
+                        Check(fixture.Member.Running.Wait(7000) && fixture.Member.BackendExited && !fixture.Member.Exited0 && !unrelated.HasExited,
+                            "Recovery did not observe the targeted exit, or treated it as normal quiescence.");
                     }
                 });
                 test("Desktop owner retirement requires every retained owned App handle to report exit", delegate

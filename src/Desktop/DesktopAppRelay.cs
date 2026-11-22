@@ -277,9 +277,12 @@ namespace CodexAccountSwitcher
         }
 
         internal static void ValidateMessage(byte[] bytes)
+        { ValidateMessage(bytes, bytes.Length); }
+
+        private static void ValidateMessage(byte[] bytes, int length)
         {
-            if (bytes.Length == 0 || bytes.Length > MaximumMessageBytes) throw new IOException("Managed relay message exceeds its bound.");
-            string text = Utf8.GetString(bytes);
+            if (length == 0 || length > MaximumMessageBytes) throw new IOException("Managed relay message exceeds its bound.");
+            string text = Utf8.GetString(bytes, 0, length);
             if (text.IndexOf('\n') >= 0 || text.IndexOf('\r') >= 0 || text.TrimStart().Length == 0 || text.TrimStart()[0] != '{' || text.TrimEnd()[text.TrimEnd().Length - 1] != '}')
                 throw new IOException("Invalid managed relay NDJSON frame.");
             try
@@ -289,6 +292,18 @@ namespace CodexAccountSwitcher
             }
             catch (ArgumentException) { throw new IOException("Invalid managed relay JSON object."); }
             catch (InvalidOperationException) { throw new IOException("Invalid managed relay JSON object."); }
+        }
+
+        private static void ValidateResponse(byte[] bytes, int length)
+        {
+            if (length <= MaximumMessageBytes) { ValidateMessage(bytes, length); return; }
+            // The authenticated host already matched the reply to a history
+            // request and encoded its UTF-8. Avoid building a second JSON tree.
+            string prefix = Encoding.ASCII.GetString(bytes, 0, DesktopHistoryReply.PrefixLimit);
+            object id; bool result;
+            if (length > DesktopHistoryReply.MaximumBytes || bytes[length - 1] != '}' ||
+                !DesktopHistoryReply.TryReadEnvelope(prefix, out id, out result) || !result)
+                throw new IOException("Invalid managed relay history response.");
         }
 
         internal static async Task<byte[]> ReadLineAsync(Stream input, CancellationToken cancellation)
@@ -357,12 +372,13 @@ namespace CodexAccountSwitcher
                             if (message.Length != 0 || result.CloseStatus != WebSocketCloseStatus.NormalClosure) throw new IOException("Managed relay closed unexpectedly.");
                             return;
                         }
-                        if (result.MessageType != WebSocketMessageType.Text || message.Length + result.Count > MaximumMessageBytes)
+                        if (result.MessageType != WebSocketMessageType.Text || message.Length + result.Count > DesktopHistoryReply.MaximumBytes)
                             throw new IOException("Invalid managed relay WebSocket frame.");
                         message.Write(buffer, 0, result.Count);
                     } while (!result.EndOfMessage);
-                    byte[] bytes = message.ToArray(); ValidateMessage(bytes);
-                    await output.WriteAsync(bytes, 0, bytes.Length, cancellation).ConfigureAwait(false);
+                    byte[] bytes = message.GetBuffer(); int length = (int)message.Length;
+                    ValidateResponse(bytes, length);
+                    await output.WriteAsync(bytes, 0, length, cancellation).ConfigureAwait(false);
                     await output.WriteAsync(new byte[] { 10 }, 0, 1, cancellation).ConfigureAwait(false);
                     await output.FlushAsync(cancellation).ConfigureAwait(false);
                 }

@@ -62,22 +62,27 @@ namespace CodexAccountSwitcher
             return inspection.Managed.All(s => s != null && s.Known && s.ControlEnabled && s.PendingRequests == 0 && s.BackgroundTerminals == 0 &&
                 (s.Idle || allowVSCodeInterrupt && s.ActiveTurns > 0));
         }
-        public Task WaitForManualExitAsync(Action<string> status, CancellationToken cancellation)
-        { return WaitForExitAsync(false, status, cancellation); }
+        public Task WaitForManualExitAsync(Action<string> status, CancellationToken cancellation, Func<CancellationToken, Task<bool>> recoverClosedBackend = null)
+        { return WaitForExitAsync(false, status, cancellation, recoverClosedBackend); }
 
-        public async Task WaitForExitAsync(bool allowInterrupt, Action<string> status, CancellationToken cancellation)
+        public async Task WaitForExitAsync(bool allowInterrupt, Action<string> status, CancellationToken cancellation,
+            Func<CancellationToken, Task<bool>> recoverClosedBackend = null)
         {
-            try { await WaitForExitCoreAsync(allowInterrupt, status, cancellation).ConfigureAwait(false); }
+            try { await WaitForExitCoreAsync(allowInterrupt, status, cancellation, recoverClosedBackend).ConfigureAwait(false); }
             catch (Exception error)
             {
                 RecordSwitchDiagnostic(error is OperationCanceledException ? "cancelled" : "failed", null, null);
                 throw;
             }
         }
-        private async Task WaitForExitCoreAsync(bool allowInterrupt, Action<string> status, CancellationToken cancellation)
+        private async Task WaitForExitCoreAsync(bool allowInterrupt, Action<string> status, CancellationToken cancellation,
+            Func<CancellationToken, Task<bool>> recoverClosedBackend)
         {
             DesktopWasRunning = false;
             var clock = System.Diagnostics.Stopwatch.StartNew();
+            var ownerExitClock = new System.Diagnostics.Stopwatch();
+            DesktopSessionState previousClosing = null;
+            bool recoveredClosedBackend = false;
             while (true)
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -85,9 +90,23 @@ namespace CodexAccountSwitcher
                 var inspection = await vscode.InspectAsync(cancellation).ConfigureAwait(false);
                 inspection.AdditionalStatus.AddRange(desktops.Select(s => s.Describe()));
                 RecordSwitchDiagnostic("waiting", inspection, desktops);
-                if (inspection.Unmanaged.Any(p => p.Kind == "Desktop") || desktops.Any(s => DesktopNative.Same(s.App))) DesktopWasRunning = true;
+                if (inspection.Unmanaged.Any(p => p.Kind == "Desktop") || desktops.Any(s => s.OwnerExitCleanup || DesktopNative.Same(s.App))) DesktopWasRunning = true;
                 if (status != null) status(inspection.Describe());
                 if (MayBeginShutdown(inspection, desktops, allowInterrupt)) break;
+                if (!recoveredClosedBackend && recoverClosedBackend != null && inspection.Unmanaged.Count > 0 && inspection.Unmanaged.Count <= 2 &&
+                    inspection.Unmanaged.Any(p => p.Kind == "Desktop") && await recoverClosedBackend(cancellation).ConfigureAwait(false))
+                {
+                    recoveredClosedBackend = true;
+                    DesktopWasRunning = true;
+                    continue;
+                }
+                var closing = desktops.Count == 1 && desktops[0].CanRecoverOwnerExit ? desktops[0] : null;
+                if (closing == null) ownerExitClock.Reset();
+                else if (previousClosing == null || closing.SessionId != previousClosing.SessionId || closing.Generation != previousClosing.Generation ||
+                    !DesktopSessionFiles.IdentityEquals(closing.Host, previousClosing.Host)) ownerExitClock.Restart();
+                previousClosing = closing;
+                if (ownerExitClock.Elapsed >= TimeSpan.FromSeconds(45))
+                    throw new UserError("Codex 視窗已退出，但舊後端仍未結束，帳號尚未套用。可在「進階選項」選「結束舊 Codex 後端」後重試。");
                 if (clock.Elapsed >= TimeSpan.FromMinutes(5)) throw new UserError("等待相關對話或背景工作超過 5 分鐘，帳號尚未套用。請確認畫面列出的來源。");
                 await Task.Delay(700, cancellation).ConfigureAwait(false);
             }
@@ -103,10 +122,10 @@ namespace CodexAccountSwitcher
         internal static object CreateSwitchDiagnostic(string phase, RuntimeInspection inspection, IList<DesktopSessionState> desktops)
         {
             string[] phases = { "waiting", "shutdown", "quiesced", "restoring", "restored", "failed", "cancelled" };
-            string[] reasons = { "initializing", "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "desktopTransportDisconnected",
+            string[] reasons = { "initializing", "runtimeQueryUnavailable", "runtimeChangedDuringQuery", "desktopConversationLoading", "desktopResponseUnavailable", "desktopTransportDisconnected",
                 "previousInstallationStillRunning", "desktopMetadataUnavailable", "localWorkPolicyChanged", "desktopStatusTimeout",
-                "desktopStatusRejected", "desktopStatusUnavailable", "desktopQuiescenceProofLost", "backendExitedUnexpectedly" };
-            string[] stages = { "running", "starting", "unknown", "orphaned", "prepared", "preparing", "quiesced", "committing", "closingApp", "recoveryRequired", "exited" };
+                "desktopStatusRejected", "desktopStatusUnavailable", "desktopQuiescenceProofLost", "backendExitedUnexpectedly", "ownerExitedWithUnconfirmedNormalBackendExit" };
+            string[] stages = { "running", "starting", "unknown", "orphaned", "prepared", "preparing", "quiesced", "committing", "closingApp", "recoveryRequired", "ownerExitCleanup", "exited" };
             string[] kinds = { "Desktop", "VSCode", "OtherIde", "CLI", "Unknown", "Integration" };
             return new
             {

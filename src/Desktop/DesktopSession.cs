@@ -49,6 +49,10 @@ namespace CodexAccountSwitcher
         public string Reason { get; set; }
         public int? BackendExitCode { get; set; }
         public DesktopSessionState() { ProtocolVersion = 1; OwnedActors = new List<DesktopProcessIdentity>(); }
+        internal bool RetirementRecorded { get; set; }
+        internal bool IsRetiringOwner { get { return RetirementRecorded || OwnerExitCleanup && State == "ownerExitCleanup"; } }
+        internal bool CanRecoverOwnerExit
+        { get { return State == "ownerExitCleanup" && OwnerExitCleanup && AppExitConfirmed && ControlEnabled; } }
         public string Describe()
         {
             string detail = OwnerExitCleanup && State != "exited" ? "舊桌面視窗已退出，正在等待它的 Codex 後端結束" :
@@ -65,6 +69,8 @@ namespace CodexAccountSwitcher
             string prefix = TransportReady ? "後端已連線，" : "";
             if (Reason == "initializing") return prefix + (TransportReady ? "正在取得工作狀態，已阻止切換" : "連線初始化中，已阻止切換");
             if (Reason == "runtimeQueryUnavailable") return prefix + "工作狀態查詢未完成，已阻止切換";
+            if (Reason == "desktopConversationLoading") return prefix + "正在載入對話，載入完成後會重新檢查工作狀態";
+            if (Reason == "desktopResponseUnavailable") return prefix + "無法核對後端回覆，已暫停帳號切換";
             if (Reason == "runtimeChangedDuringQuery") return prefix + "查詢期間工作狀態變動，尚未確認可安全切換";
             if (Reason == "desktopStatusTimeout") return "控制狀態查詢逾時，正在等待重新確認；尚未自動關閉";
             if (Reason == "desktopStatusRejected") return "控制狀態尚未確認，可能正在重新連線；已阻止切換";
@@ -441,11 +447,12 @@ namespace CodexAccountSwitcher
                         !String.Equals(DesktopSessionFiles.Canonical(record.Home), home, StringComparison.OrdinalIgnoreCase) ||
                         String.IsNullOrEmpty(record.PipeName) || record.PipeName != "CodexAccountSwitcher.desktop." + record.SessionId)
                         throw new UserError("桌面整合記錄驗證失敗，已停止自動控制。");
+                    record.RetirementRecorded = record.OwnerExitCleanup && record.State == "ownerExitCleanup";
                     if (!CurrentInstallation(record))
                     {
                         // An older installation authenticates only its original controller. Its
                         // private catalog may identify blockers, but never grants this controller
-                        // permission to query/control it or exempt any of its actors from guards.
+                        // permission to query its pipe or exempt any of its actors from guards.
                         if (!DesktopNative.Same(record.Host) && !record.OwnedActors.Any(DesktopNative.Same)) continue;
                         record.Known = record.Idle = record.ControlEnabled = false;
                         record.AllBackendsExited = record.AppExitConfirmed = record.RecoveryAccepted = false;
@@ -466,13 +473,16 @@ namespace CodexAccountSwitcher
         }
         public Task EnableAndLaunchAsync(string appExe, CancellationToken cancellation)
         { return EnableAndLaunchAsync(appExe, null, cancellation); }
-        public async Task EnableAndLaunchAsync(string appExe, Action<string> status, CancellationToken cancellation)
+        public async Task EnableAndLaunchAsync(string appExe, Action<string> status, CancellationToken cancellation,
+            Func<CancellationToken, Task<bool>> recoverClosedBackend = null)
         {
             cancellation.ThrowIfCancellationRequested();
             validatePrerequisites(appExe);
             SetControlRequested(true);
             await DesktopFirstEnableWaiter.WaitAsync(async delegate
             {
+                if (recoverClosedBackend != null && await recoverClosedBackend(cancellation).ConfigureAwait(false) && status != null)
+                    status("已要求結束舊 Codex 後端，正在確認程序退出…");
                 var blockers = inspect();
                 if (blockers == null) throw new UserError("無法確認背景程序，已停止首次啟用。");
                 foreach (var state in await InspectAsync(cancellation).ConfigureAwait(false))
@@ -489,14 +499,16 @@ namespace CodexAccountSwitcher
         { return LaunchIfEnabledAsync(appExe, null, cancellation); }
         public Task LaunchIfEnabledAsync(string appExe, Action<string> status, CancellationToken cancellation)
         { return LaunchIfEnabledAsync(appExe, status, cancellation, false); }
-        public async Task OpenManagedAsync(string appExe, Action<string> status, CancellationToken cancellation)
+        public async Task OpenManagedAsync(string appExe, Action<string> status, CancellationToken cancellation,
+            Func<CancellationToken, Task<bool>> recoverClosedBackend = null)
         {
             cancellation.ThrowIfCancellationRequested();
             if (!ControlRequested) throw new UserError("桌面控制已關閉，已停止受管啟動；登入資料未變更。");
-            if (Enabled) await LaunchIfEnabledAsync(appExe, status, cancellation, true).ConfigureAwait(false);
-            else await EnableAndLaunchAsync(appExe, status, cancellation).ConfigureAwait(false);
+            if (Enabled) await LaunchIfEnabledAsync(appExe, status, cancellation, true, recoverClosedBackend).ConfigureAwait(false);
+            else await EnableAndLaunchAsync(appExe, status, cancellation, recoverClosedBackend).ConfigureAwait(false);
         }
-        private async Task LaunchIfEnabledAsync(string appExe, Action<string> status, CancellationToken cancellation, bool waitForUnmanaged)
+        private async Task LaunchIfEnabledAsync(string appExe, Action<string> status, CancellationToken cancellation, bool waitForUnmanaged,
+            Func<CancellationToken, Task<bool>> recoverClosedBackend = null)
         {
             if (!Enabled) return;
             var states = await InspectAsync(cancellation).ConfigureAwait(false);
@@ -506,13 +518,21 @@ namespace CodexAccountSwitcher
                 validatePrerequisites(appExe);
                 if (status != null) status("偵測到舊版桌面整合，正在撤銷舊控制並等候正常退出。請保持切換器開啟，再從 Codex 選單選「結束 ChatGPT / Quit」。");
                 await DisableAsync(cancellation).ConfigureAwait(false);
-                await EnableAndLaunchAsync(appExe, status, cancellation).ConfigureAwait(false);
+                await EnableAndLaunchAsync(appExe, status, cancellation, recoverClosedBackend).ConfigureAwait(false);
                 return;
             }
             foreach (var state in states.Where(s => DesktopNative.Same(s.Host)))
             {
                 if (state.OwnerExitCleanup && state.State != "exited")
-                    throw new UserError("舊桌面視窗已退出，Codex 後端仍在收尾。請稍後再按「開啟 Codex App」。");
+                {
+                    if (waitForUnmanaged && recoverClosedBackend != null)
+                    {
+                        await EnableAndLaunchAsync(appExe, status, cancellation, recoverClosedBackend).ConfigureAwait(false);
+                        return;
+                    }
+                    throw new UserError(state.CanRecoverOwnerExit ? "舊 Codex 後端仍在收尾。若一直未退出，可在「進階選項」選「結束舊 Codex 後端」。" :
+                        "舊 Codex 後端仍在收尾。請稍後再按「開啟 Codex App」。");
+                }
                 if (!state.Known || !state.ControlEnabled) throw new UserError("既有桌面整合狀態未知，請先正常 Quit 後恢復，避免重複啟動。");
                 if (state.State == "quiesced" && state.AllBackendsExited && state.AppExitConfirmed)
                 { touched.Add(state.SessionId); HadManagedDesktop = true; await RestoreAsync().ConfigureAwait(false); return; }
@@ -524,7 +544,7 @@ namespace CodexAccountSwitcher
                 if (!waitForUnmanaged) throw new UserError("仍有未受控的桌面程序，請先從 Codex 選單正常 Quit；不會啟動第二個工作階段。");
                 cancellation.ThrowIfCancellationRequested();
                 if (!ControlRequested) throw new UserError("桌面控制已關閉，已停止受管啟動；登入資料未變更。");
-                await EnableAndLaunchAsync(appExe, status, cancellation).ConfigureAwait(false);
+                await EnableAndLaunchAsync(appExe, status, cancellation, recoverClosedBackend).ConfigureAwait(false);
                 return;
             }
             await LaunchCore(appExe, cancellation, false).ConfigureAwait(false);
@@ -701,6 +721,27 @@ namespace CodexAccountSwitcher
             }
             return result;
         }
+        public async Task TerminateRetiringBackendsAsync(DesktopSessionState record, CancellationToken cancellation, DesktopProcessIdentity soleBackend = null)
+        {
+            if (record == null || !record.CanRecoverOwnerExit || !CurrentInstallation(record))
+                throw new UserError("沒有可核對且桌面已退出的舊 Codex 後端。");
+            Exception failure = null;
+            var payload = soleBackend == null ? null : new Dictionary<string, object> { { "soleBackendPid", soleBackend.Pid }, { "soleBackendStartedUtc", soleBackend.StartedUtc } };
+            try { await Request(record, "terminateRetiringBackends", cancellation, false, payload).ConfigureAwait(false); }
+            catch (Exception error) { cancellation.ThrowIfCancellationRequested(); failure = error; }
+
+            // The supervisor may exit before it can reply. Wait for the original
+            // identities to disappear, and leave the switch's final rescan in place.
+            var clock = Stopwatch.StartNew();
+            while (DesktopNative.Same(record.Host) || record.OwnedActors.Any(DesktopNative.Same))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                if (clock.Elapsed >= TimeSpan.FromSeconds(8))
+                    throw new UserError(failure == null ? "舊 Codex 後端仍未確認退出，請再檢查工作狀態。" :
+                        "無法結束舊後端。請確認 Codex 視窗未重開，並重新檢查工作狀態。");
+                await Task.Delay(250, cancellation).ConfigureAwait(false);
+            }
+        }
         private void ValidateContinuationBinding(DesktopContinuationCheckpoint checkpoint)
         {
             Guid session, thread;
@@ -760,7 +801,7 @@ namespace CodexAccountSwitcher
         {
             return state.State == "running" && state.ControlEnabled && state.TransportReady && !state.Known &&
                 !state.BackendExitCode.HasValue && (state.Reason == "runtimeQueryUnavailable" ||
-                    state.Reason == "runtimeChangedDuringQuery" || state.Reason == "initializing");
+                    state.Reason == "runtimeChangedDuringQuery" || state.Reason == "desktopConversationLoading" || state.Reason == "initializing");
         }
         public void BindContinuationRestore(DesktopContinuationCheckpoint checkpoint, string operationId)
         {
@@ -958,7 +999,7 @@ namespace CodexAccountSwitcher
             Action checkDeadline = delegate
             {
                 if (clock.Elapsed >= maxWait)
-                    throw new UserError("首次啟用等待已超過 5 分鐘，尚未啟用。請檢查畫面列出的程序，再重新按啟用；不會強制結束程式。");
+                    throw new UserError("等待 Codex 退出已超過 5 分鐘。請檢查畫面列出的程序後，再按「開啟 Codex」。");
             };
             while (true)
             {
@@ -1032,7 +1073,7 @@ namespace CodexAccountSwitcher
         Dictionary<string, object> Prepare();
         Dictionary<string, object> Commit();
         void Unprepare();
-        bool Exited0 { get; }
+        bool Retired { get; }
         bool Disconnected { get; }
     }
     internal interface IDesktopSessionBoundedCommit
@@ -1053,6 +1094,28 @@ namespace CodexAccountSwitcher
         internal Func<bool> Enabled, AppGone;
         internal Func<DesktopShutdownResult> Shutdown;
         internal Action Freeze, Unfreeze, Persist;
+        internal bool CanAdmitMember()
+        {
+            lock (Admission) return !Frozen && !EofCommitted && Members.Count < 128 &&
+                Members.Count(m => !m.Retired) < 16 && !Members.Any(m => !m.Retired && m.Disconnected);
+        }
+        internal void NoteDisconnectedMember(IDesktopSessionMember member)
+        {
+            lock (Admission)
+            {
+                if (member != null && member.Disconnected && !member.Retired && Members.Contains(member) &&
+                    (Stage == "running" || Stage == "starting")) Stage = "orphaned";
+            }
+        }
+        internal bool FinishOrphanRecovery()
+        {
+            lock (Admission)
+            {
+                if (Stage != "orphaned" || Frozen || EofCommitted || Members.Any(m => !m.Retired && m.Disconnected)) return false;
+                Stage = Members.Any(m => !m.Retired) ? "running" : "starting";
+                return true;
+            }
+        }
         internal bool Admit(IDesktopSessionMember member)
         {
             lock (Admission)
@@ -1060,7 +1123,7 @@ namespace CodexAccountSwitcher
                 // A desktop can own independent chat and account connections.
                 // Each remains a separately initialized backend; quiescence must
                 // freeze and positively retire the entire admitted group.
-                if (Frozen || EofCommitted || Members.Any(m => !m.Exited0 && m.Disconnected) || Members.Count(m => !m.Exited0) >= 16 || Members.Count >= 128) return false;
+                if (!CanAdmitMember()) return false;
                 Members.Add(member); Generation++; EofCommitted = false; Stage = "running"; if (Persist != null) Persist(); return true;
             }
         }
@@ -1074,14 +1137,14 @@ namespace CodexAccountSwitcher
                     return elapsed < 0 || elapsed >= GracefulShutdownBudgetMs ? 0 : GracefulShutdownBudgetMs - (int)elapsed;
                 };
                 if (!Enabled() || !alive()) return false;
-                if (Stage == "quiesced") return Members.All(m => m.Exited0) && AppGone();
+                if (Stage == "quiesced") return Members.All(m => m.Retired) && AppGone();
                 if (Stage != "running" && Stage != "orphaned" && Stage != "prepared") return false;
                 bool previouslyFrozen = Frozen; string previousStage = Stage;
                 Frozen = true; Freeze(); int generation = Generation; var captured = Members.ToArray(); Stage = "preparing"; Persist();
                 var prepared = new List<IDesktopSessionMember>();
                 try
                 {
-                    foreach (var member in captured.Where(m => !m.Exited0))
+                    foreach (var member in captured.Where(m => !m.Retired))
                     {
                         if (!Enabled() || !alive() || remaining() < 100) throw new OperationCanceledException();
                         var result = member.Prepare(); prepared.Add(member);
@@ -1097,10 +1160,10 @@ namespace CodexAccountSwitcher
                         EofCommitted = true;
                         var bounded = member as IDesktopSessionBoundedCommit;
                         var result = bounded == null ? member.Commit() : bounded.CommitForShutdown(() => Enabled() && alive() && remaining() >= 100, remaining());
-                        if (!DesktopSessionFiles.Quiet(result) || DesktopSessionFiles.Text(result, "state") != "quiesced" || !member.Exited0)
+                        if (!DesktopSessionFiles.Quiet(result) || DesktopSessionFiles.Text(result, "state") != "quiesced" || !member.Retired)
                             throw new IOException("Owned backend EOF/exit0 was not confirmed.");
                     }
-                    if (!captured.All(m => m.Exited0) || generation != Generation || !Enabled() || !alive()) throw new IOException("Desktop membership or authorization changed.");
+                    if (!captured.All(m => m.Retired) || generation != Generation || !Enabled() || !alive()) throw new IOException("Desktop membership or authorization changed.");
                     Stage = "closingApp"; Persist();
                     var closed = Shutdown();
                     if (!closed.Success || closed.ExitCode != 0) throw new IOException("Desktop App refused cooperative shutdown or exit0 was not confirmed.");
@@ -1113,7 +1176,7 @@ namespace CodexAccountSwitcher
                 }
                 catch (Exception error)
                 {
-                    if (!EofCommitted && !prepared.Any(m => m.Exited0))
+                    if (!EofCommitted && !prepared.Any(m => m.Retired))
                     {
                         foreach (var member in prepared) { try { member.Unprepare(); } catch { } }
                         Frozen = previouslyFrozen; if (!previouslyFrozen) Unfreeze(); Stage = previousStage;

@@ -111,6 +111,20 @@ namespace CodexAccountSwitcher
 
         public static void Register(Action<string, Action> test)
         {
+            test("Desktop backend reader drains an oversized record and keeps the next reply", delegate
+            {
+                const string first = "{\"jsonrpc\":\"2.0\",\"id\":\"client:history\",\"result\":\"";
+                using (var input = new StringReader(first + new string('x', 40000) + "\"}\r\n{\"id\":2,\"result\":{}}\n"))
+                {
+                    var reader = new ManagedBridge.BackendLineReader(input, 128);
+                    bool oversized, result; object id;
+                    string prefix = reader.Read(out oversized);
+                    Check(oversized && prefix.Length == 128 && DesktopHistoryReply.TryReadEnvelope(prefix, out id, out result) && result && Object.Equals(id, "client:history"),
+                        "An oversized backend reply lost its bounded correlation ID.");
+                    Check(reader.Read(out oversized) == "{\"id\":2,\"result\":{}}" && !oversized && reader.Read(out oversized) == null,
+                        "The following reply was lost after draining a large record.");
+                }
+            });
             test("New integration directories and metadata belong to the current user and remain readable after replacement", delegate
             {
                 string root = Path.Combine(Path.GetTempPath(), "CodexAccountSwitcher-owner-" + Guid.NewGuid().ToString("N"));
@@ -175,6 +189,21 @@ namespace CodexAccountSwitcher
             string fake = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "FakeManagedBackend.exe");
             if (!File.Exists(fake)) return;
             RegisterContinuationTests(test, fake);
+            test("Managed desktop forwards a large history reply and rejects a large unrelated response without losing the channel", delegate
+            {
+                using (var fixture = new Fixture(fake, "large-history", true))
+                {
+                    fixture.Bridge.HostForward(ManagedBridge.Encode(new { id = "client:large-history", method = "thread/read", @params = new { threadId = "fake-thread-a" } }));
+                    Wait(() => fixture.Output.Lines.Any(line => line.Length > DesktopHistoryReply.NormalBytes && line.StartsWith("{\"id\":\"client:large-history\"", StringComparison.Ordinal)),
+                        "History was lost at the old limit.");
+                    fixture.Bridge.HostForward(ManagedBridge.Encode(new { id = "client:large-other", method = "test/large", @params = new { } }));
+                    Wait(() => fixture.Output.Lines.Any(line => line.StartsWith("{\"id\":\"client:large-other\"", StringComparison.Ordinal) && line.Contains("\"error\"")),
+                        "A large non-history reply received neither its bounded error nor the original full response.");
+                    fixture.Bridge.HostForward(ManagedBridge.Encode(new { id = "client:next-history", method = "thread/read", @params = new { threadId = "fake-thread-a" } }));
+                    Wait(() => fixture.Output.Lines.Any(line => line.Contains("client:next-history")), "A following history request did not return.");
+                    Check(Flag(fixture.Status(), "idle"), "Large replies stranded pending work-state counters.");
+                }
+            });
             test("Desktop initialization succeeds after the forwarded reply without an optional initialized notification", delegate
             {
                 using (var fixture = new Fixture(fake, "idle", true, false, false))
@@ -194,6 +223,23 @@ namespace CodexAccountSwitcher
                     Check(Flag(status, "transportReady") && !Flag(status, "known") && !Flag(status, "idle"), "Transport readiness fabricated work-state proof.");
                     var prepared = fixture.Bridge.HostControl("prepare", 3000);
                     Check(!Flag(prepared, "prepared") && !Flag(prepared, "idle") && !Flag(prepared, "eofCommitted"), "Unknown work was allowed to prepare/commit an account switch.");
+                }
+            });
+            test("Managed desktop history reads take priority over status scans and prevent switching", delegate
+            {
+                using (var fixture = new Fixture(fake, "slow-hydration", true))
+                {
+                    fixture.Bridge.HostForward(ManagedBridge.Encode(new { id = "client:slow-history", method = "thread/read",
+                        @params = new { threadId = "fake-thread-a", includeTurns = true } }));
+                    var status = fixture.Status();
+                    Check(Flag(status, "transportReady") && !Flag(status, "known") && !Flag(status, "idle") && Text(status, "reason") == "desktopConversationLoading",
+                        "Status tried to scan the backend while the desktop was loading a conversation.");
+                    Check(DesktopRuntimeHost.MayWaitForReadOnlyPeer(status, true) && !DesktopRuntimeHost.MayWaitForReadOnlyPeer(status, false),
+                        "Continuation did not defer its read-only peer or allowed a mutating peer to defer.");
+                    var prepared = fixture.Bridge.HostControl("prepare", 3000);
+                    Check(!Flag(prepared, "prepared") && !Flag(prepared, "eofCommitted"), "History loading became an idle shutdown lease.");
+                    Wait(() => fixture.Output.Lines.Any(line => line.Contains("client:slow-history")), "Conversation response was not forwarded.");
+                    Check(Flag(fixture.Status(), "idle"), "Work-state checks did not resume after the history response.");
                 }
             });
             test("Desktop rejected initialization never grants transport or work-state readiness", delegate

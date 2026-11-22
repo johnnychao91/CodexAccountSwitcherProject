@@ -105,7 +105,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="{x:Static roster:RosterTheme.Primary}" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="{x:Static roster:RosterTheme.Gold}" Margin="0,21,0,16"/>
-          <TextBlock Text="v1.6.22" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11"/>
+          <TextBlock Text="v1.6.28" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -215,10 +215,11 @@
                 <TextBlock x:Name="ContinuationModeText" Grid.Column="1" VerticalAlignment="Center" TextWrapping="Wrap"/>
               </Grid>
               <CheckBox x:Name="InterruptCheck" Content="切換時允許正常中止 VS Code 的 Codex 回合" ToolTip="僅限已整合的 VS Code" Margin="0,0,0,9"/>
-              <StackPanel Orientation="Horizontal">
-                <Button x:Name="RuntimeButton" Content="檢查工作狀態" Padding="10,6" Margin="0,0,8,0"/>
-                <Button x:Name="IntegrationButton" Content="VS Code 整合…" Padding="10,6"/>
-              </StackPanel>
+              <WrapPanel>
+                <Button x:Name="RuntimeButton" Content="檢查工作狀態與 PID" Padding="10,6" Margin="0,0,8,0"/>
+                <Button x:Name="IntegrationButton" Content="VS Code 整合…" Padding="10,6" Margin="0,0,8,0"/>
+                <Button x:Name="RetireBackendButton" Content="結束舊 Codex 後端" Padding="10,6"/>
+              </WrapPanel>
             </StackPanel>
           </Expander>
         </StackPanel>

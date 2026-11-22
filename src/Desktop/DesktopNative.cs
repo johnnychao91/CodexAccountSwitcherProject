@@ -82,6 +82,7 @@ namespace CodexAccountSwitcher
             [MarshalAs(UnmanagedType.Bool)] public bool Restartable;
         }
         [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
+        [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(SafeProcessHandle process, uint exitCode);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(SafeProcessHandle process, out FileTime created, out FileTime exited, out FileTime kernel, out FileTime user);
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetExitCodeProcess(SafeProcessHandle process, out uint code);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, int flags, StringBuilder name, ref int size);
@@ -177,6 +178,17 @@ namespace CodexAccountSwitcher
                 FileTime created, exited, kernel, user;
                 return GetProcessTimes(handle, out created, out exited, out kernel, out user) &&
                     (!StartedMatches(created, identity.StartedUtc) || Value(exited) != 0);
+            }
+        }
+        internal static bool TerminateVerified(DesktopProcessIdentity identity)
+        {
+            if (!Same(identity)) return ConfirmedExited(identity);
+            using (var handle = OpenProcess(0x1001, false, identity.Pid))
+            {
+                FileTime created, exited, kernel, user;
+                if (handle.IsInvalid || !CurrentUser(handle) || !GetProcessTimes(handle, out created, out exited, out kernel, out user) ||
+                    !StartedMatches(created, identity.StartedUtc)) return false;
+                return Value(exited) != 0 || TerminateProcess(handle, 1);
             }
         }
         internal static string AppToolsPipeName(string path)

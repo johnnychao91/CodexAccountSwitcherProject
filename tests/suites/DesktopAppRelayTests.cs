@@ -162,6 +162,44 @@ namespace CodexAccountSwitcher
                     Check(Rejected(() => DesktopAppRelay.RunAsync(socket, input, output, timeout.Token).GetAwaiter().GetResult()) && output.Length == 0,
                         "A binary frame was written into App NDJSON.");
             });
+            test("Desktop App relay delivers a large history record followed by a short reply over loopback", delegate
+            {
+                string token = new string('b', 43);
+                string prefix = "{\"id\":8,\"result\":{\"history\":\"";
+                string suffix = "一個字\"}}";
+                string history = prefix + new string('a', 16383 - prefix.Length) + "\ud83d\ude00" + new string('b', DesktopHistoryReply.NormalBytes) + suffix;
+                Exception failure = null;
+                using (var done = new ManualResetEventSlim())
+                using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25)))
+                using (var server = new DesktopWebSocketServer(token, peer => true, connection =>
+                {
+                    try
+                    {
+                        connection.SendHistoryReply(history, deadline.Token);
+                        connection.SendText("{\"id\":9,\"result\":{}}", deadline.Token);
+                        connection.Close(1000, "");
+                    }
+                    catch (Exception error) { failure = error; }
+                    finally { done.Set(); }
+                }))
+                {
+                    server.Start(); var parsed = DesktopAppRelay.ParseEndpoint(server.Endpoint.AbsoluteUri);
+                    using (var socket = new ClientWebSocket())
+                    using (var input = new BlockingInput(new byte[0]))
+                    using (var output = new MemoryStream())
+                    {
+                        socket.Options.Proxy = null; socket.Options.SetRequestHeader("Authorization", parsed.Authorization);
+                        socket.ConnectAsync(parsed.Address, deadline.Token).GetAwaiter().GetResult();
+                        Check(DesktopAppRelay.RunAsync(socket, input, output, deadline.Token).GetAwaiter().GetResult() == 0 && done.Wait(1000) && failure == null,
+                            "A large reply disconnected the relay.");
+                        var bytes = output.GetBuffer(); int firstLength = Encoding.UTF8.GetByteCount(history);
+                        Check(Encoding.UTF8.GetString(bytes, 16383, 4) == "\ud83d\ude00" &&
+                            Encoding.UTF8.GetString(bytes, firstLength - Encoding.UTF8.GetByteCount(suffix), Encoding.UTF8.GetByteCount(suffix)) == suffix &&
+                            Encoding.UTF8.GetString(bytes, firstLength, (int)output.Length - firstLength) == "\n{\"id\":9,\"result\":{}}\n",
+                            "A UTF-8 boundary or the next reply was corrupted.");
+                    }
+                }
+            });
             test("Desktop App relay actual loopback WebSocket preserves Unicode records and normal server close", delegate
             {
                 string token = new string('b', 43); string greeting = null, first = null, second = null; Exception serverError = null;

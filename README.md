@@ -1,6 +1,6 @@
 # Codex Roster
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.22\CodexRoster.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.28\CodexRoster.exe`。
 
 ## 新電腦開始使用
 
@@ -9,6 +9,34 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
 開啟 Roster 時，桌面控制會自動嘗試接管 Codex。要依額度切換帳號，可勾選「自動切換帳號」。「進階選項」提供自動續跑、工作狀態與 VS Code 整合。
+
+## v1.6.28
+
+- 受管桌面會分段傳送大型對話回覆，容許最多 128 MiB。若回覆仍超過上限，該讀取要求會收到錯誤，後端繼續處理其他要求。
+
+## v1.6.27
+
+- 按「開啟 Codex」進入等待後，會持續檢查能否清理已退出桌面的舊後端。若只剩已核對的舊後端及其協調器，會結束後端，待協調器自行退出後再接管。仍有 Codex 視窗時繼續等待。
+
+## v1.6.26
+
+- 受管桌面有一條後端連線中斷時，其他仍正常的連線可以繼續讀取對話。仍在清理的後端會保留切換保護，直到確認工作狀態或退出。
+- 載入對話期間先完成 Codex 的讀取，再執行切換器的工作狀態掃描。載入尚未完成時不會判定為閒置。
+
+## v1.6.25
+
+- 切換時會重新確認受管桌面閒置並暫停新工作。已確認閒置的後端收到正常退出訊號後，若兩秒仍未結束，切換器會結束該後端，再確認桌面退出後才套用帳號。
+- 等待接管時，若原桌面已退出且只剩一個可核對歸屬的 Codex 後端，切換器會自動清理並接續啟動。來源未知或出現其他 Codex 程序時會繼續等待。
+
+## v1.6.24
+
+- Codex 視窗退出後，由協調器用自己持有的程序控制代碼核對舊後端是否結束。清理本機狀態檔失敗時，仍可辨識 Windows 已確認的退出。
+- 已確認桌面退出而舊後端連續 45 秒仍未收尾時，切換會暫停。可在「進階選項」選「結束舊 Codex 後端」，確認後才強制結束該桌面的後端。完成後可重試切換。
+
+## v1.6.23
+
+- 手動切換會重新掃描目前 Windows 工作階段，嘗試正常關閉可核對的單一 Codex 視窗。「進階選項」的「檢查工作狀態與 PID」會列出即時檢查結果。
+- 本機歷史改用增量快照。第一次建立基準，之後沿用未變更的檔案。已變更的大型資料庫會重新讀取並比對內容，只新增有差異的區塊。
 
 ## v1.6.22
 
@@ -38,9 +66,17 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 ## 切換帳號時保留本機對話與記憶
 
 - 手動切換、自動切換和「切回上一個」共用同一個保護流程：等 Codex 及相關後端正常退出、完成本機快照後，才寫入新登入。若檔案被占用、備份失敗或資料在備份期間變更，就停止切換。
-- 快照放在 `%LOCALAPPDATA%\CodexAccountSwitcher\local-history-backups`。ZIP 的 `home/` 包含本機對話、封存對話、索引與記憶檔；`sqlite/` 包含相關 SQLite 資料庫及存在的 WAL／journal。預設 SQLite 與 `CODEX_HOME` 同一位置；也會辨識 `CODEX_SQLITE_HOME` 或 `config.toml` 的單行 `sqlite_home` 設定。
+- 快照放在 `%LOCALAPPDATA%\CodexAccountSwitcher\local-history-backups`。舊版完整 ZIP 仍可直接解壓縮。增量快照與共用資料區塊存於 `incremental`。匯出的 ZIP 中，`home/` 包含本機對話、封存對話、索引與記憶檔，`sqlite/` 包含相關 SQLite 資料庫及 WAL／journal。預設 SQLite 與 `CODEX_HOME` 同一位置，也會辨識 `CODEX_SQLITE_HOME` 或 `config.toml` 的單行 `sqlite_home` 設定。
 - 切換器不會下載、上傳或合併雲端對話與記憶，不會複製 Electron 帳號快取，也不會變更 Codex App 自己的連線設定。已有的側欄設定保留；補入目標側欄的對話歸屬，須有仍存在的本機對話檔佐證。新增帳號與額度查詢使用自己的暫存 SQLite，不會開啟正式資料庫。
-- 快照只供復原，不會在切換時自動覆蓋正式資料。若有檔案消失，請先正常結束 Codex，保留目前資料，將消失前的 ZIP 解壓到獨立資料夾核對。只補回確定缺少的對話或記憶檔；不要把舊 SQLite 或 WAL 混入仍在使用的資料庫。ZIP 是 Windows 私人檔案但未額外加密，可能含對話與記憶全文；請勿上傳或放入同步資料夾。快照不會自動刪除，可自行清理已不需要的舊檔。
+- 復原前請先退出 Codex、保留目前資料，再把快照的 ZIP 解壓到獨立資料夾核對。只補回確定缺少的對話及記憶；SQLite 與 WAL 須來自同一快照。快照與匯出檔是 Windows 私人檔案，未額外加密，可能包含對話全文。增量快照會共用 `parts` 裡的檔案，請整個資料夾一併保留。
+
+從專案根目錄執行以下 PowerShell 指令可匯出最近一次增量快照。以 `.snapshot.json` 的檔名取代 `latest` 可選擇較舊的快照。請指定新 ZIP 路徑，結束碼 `0` 代表已完成匯出。
+
+```powershell
+$zip = Join-Path (Get-Location) 'codex-history-restore.zip'
+$result = Start-Process .\release\v1.6.28\CodexRoster.exe -ArgumentList '--export-history', 'latest', ('"' + $zip + '"') -WindowStyle Hidden -Wait -PassThru
+$result.ExitCode
+```
 
 ## v1.6.16：適配 Codex 26.1117.4957.0
 
@@ -324,7 +360,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在 Roster 展開「進階選項」，選「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.22\codex-account-switcher-vscode.vsix`。
+1. 在 Roster 展開「進階選項」，選「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.28\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Roster: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。

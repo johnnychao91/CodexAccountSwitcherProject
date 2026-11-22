@@ -425,7 +425,29 @@ namespace CodexAccountSwitcher
             byte[] bytes = utf8.GetBytes(text);
             Send(bytes, DesktopWebSocketNative.TextType, 0, cancellation);
         }
-        private void Send(byte[] bytes, uint type, ushort code, CancellationToken cancellation)
+        internal void SendHistoryReply(string text, CancellationToken cancellation)
+        {
+            var utf8 = new UTF8Encoding(false, true);
+            object id; bool result;
+            if (text == null || text.Length > DesktopHistoryReply.MaximumBytes || utf8.GetByteCount(text) > DesktopHistoryReply.MaximumBytes ||
+                !DesktopHistoryReply.TryReadEnvelope(text, out id, out result) || !result)
+                throw new IOException("Invalid managed desktop history reply.");
+
+            var encoder = utf8.GetEncoder();
+            var chars = new char[16384]; var bytes = new byte[utf8.GetMaxByteCount(chars.Length)];
+            lock (sendGate)
+            {
+                for (int offset = 0; offset < text.Length;)
+                {
+                    int count = Math.Min(chars.Length, text.Length - offset);
+                    text.CopyTo(offset, chars, 0, count); offset += count;
+                    bool last = offset == text.Length;
+                    int length = encoder.GetBytes(chars, 0, count, bytes, 0, last);
+                    Send(bytes, last ? DesktopWebSocketNative.TextType : DesktopWebSocketNative.TextFragment, 0, cancellation, length);
+                }
+            }
+        }
+        private void Send(byte[] bytes, uint type, ushort code, CancellationToken cancellation, int? byteCount = null)
         {
             lock (sendGate)
             {
@@ -435,7 +457,7 @@ namespace CodexAccountSwitcher
                     using (cancellation.Register(Dispose))
                     {
                         CheckAlive(cancellation); pinned = GCHandle.Alloc(bytes, GCHandleType.Pinned);
-                        var buffer = new DesktopWebSocketNative.Buffer { Data = pinned.AddrOfPinnedObject(), Length = (uint)bytes.Length, Status = code };
+                        var buffer = new DesktopWebSocketNative.Buffer { Data = pinned.AddrOfPinnedObject(), Length = (uint)(byteCount ?? bytes.Length), Status = code };
                         lock (nativeGate) DesktopWebSocketNative.Check(DesktopWebSocketNative.Send(handle, type, new[] { buffer }, IntPtr.Zero));
                         var clock = Stopwatch.StartNew();
                         while (true)
