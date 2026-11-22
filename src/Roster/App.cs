@@ -129,6 +129,13 @@ namespace CodexAccountSwitcher
             using (var source = typeof(MainView).Assembly.GetManifestResourceStream("MainWindow.xaml")) Window = (Window)XamlReader.Load(source);
             Window.Icon = LoadArtwork("RosterIcon.ico", 32);
             Element<Image>("RosterLogo").Source = LoadArtwork("RosterLogo.png");
+            Click("CaptionMinimizeButton", delegate { SystemCommands.MinimizeWindow(Window); });
+            Click("CaptionMaximizeButton", delegate
+            {
+                if (Window.WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(Window);
+                else SystemCommands.MaximizeWindow(Window);
+            });
+            Click("CaptionCloseButton", delegate { SystemCommands.CloseWindow(Window); });
             Window.Height = Math.Min(Window.Height, Math.Max(Window.MinHeight, SystemParameters.WorkArea.Height - 24));
             List.SelectionChanged += delegate { UpdateButtons(); };
             Click("RefreshButton", async delegate { await RunManual(async delegate { Refresh(); await RefreshUsage(); }); });

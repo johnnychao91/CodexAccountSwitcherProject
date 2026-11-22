@@ -20,6 +20,26 @@ namespace CodexAccountSwitcher
         }
         public static void Register(Action<string, Action> test)
         {
+            test("The Roster title bar uses app colors and preserves caption and resize hit regions", delegate
+            {
+                var view = new MainView(true);
+                try
+                {
+                    var chrome = System.Windows.Shell.WindowChrome.GetWindowChrome(view.Window);
+                    var bar = (Border)view.Window.FindName("RosterTitleBar");
+                    Check(ReferenceEquals(bar.Background, RosterTheme.Mist));
+                    Check(ReferenceEquals(bar.BorderBrush, RosterTheme.SoftGold));
+                    Check(chrome.CornerRadius.TopLeft == 10 && chrome.CaptionHeight > 0 && chrome.ResizeBorderThickness.Top > 0);
+                    Check(chrome.GlassFrameThickness == new Thickness(0) && !chrome.UseAeroCaptionButtons);
+                    foreach (string name in new[] { "CaptionMinimizeButton", "CaptionMaximizeButton", "CaptionCloseButton" })
+                    {
+                        var button = Button(view, name);
+                        Check(button.Focusable && System.Windows.Shell.WindowChrome.GetIsHitTestVisibleInChrome(button));
+                        Check(!String.IsNullOrEmpty(System.Windows.Automation.AutomationProperties.GetName(button)));
+                    }
+                }
+                finally { view.Window.Close(); }
+            });
             test("Brand artwork has an unframed sidebar logo and a native window icon", delegate
             {
                 var view = new MainView(true);
