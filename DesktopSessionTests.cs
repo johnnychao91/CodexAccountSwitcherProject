@@ -228,7 +228,7 @@ namespace CodexAccountSwitcher
                 string name = "codex-app-tools-test-" + Guid.NewGuid().ToString("N"), path = @"\\.\pipe\" + name;
                 using (var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous))
                 {
-                    var connected = Task.Run(() => pipe.WaitForConnection());
+                    var connected = Task.Factory.FromAsync(pipe.BeginWaitForConnection, pipe.EndWaitForConnection, null);
                     var verified = DesktopNative.VerifyAppToolsPipe(path, own, own.ExecutablePath);
                     Check(DesktopNative.Equal(verified, own) && connected.Wait(2000), "The native server did not belong to the exact live synthetic App.");
                     var eof = Task.Run(() => pipe.ReadByte());
@@ -241,7 +241,7 @@ namespace CodexAccountSwitcher
                 string foreignName = "codex-app-tools-unowned-" + Guid.NewGuid().ToString("N");
                 using (var pipe = new NamedPipeServerStream(foreignName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous))
                 {
-                    var connected = Task.Run(() => pipe.WaitForConnection());
+                    var connected = Task.Factory.FromAsync(pipe.BeginWaitForConnection, pipe.EndWaitForConnection, null);
                     Check(Rejected(() => DesktopNative.VerifyAppToolsPipe(@"\\.\pipe\" + foreignName, parent, parent.ExecutablePath)) && connected.Wait(2000),
                         "An unrelated process's pipe was represented as the managed App broker.");
                 }
