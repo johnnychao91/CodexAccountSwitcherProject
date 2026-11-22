@@ -105,7 +105,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="{x:Static roster:RosterTheme.Primary}" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="{x:Static roster:RosterTheme.Gold}" Margin="0,21,0,16"/>
-          <TextBlock Text="v1.6.21" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11"/>
+          <TextBlock Text="v1.6.22" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11"/>
         </StackPanel>
       </Grid>
     </Border>

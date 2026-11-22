@@ -109,7 +109,7 @@ namespace CodexAccountSwitcher
                         ReadCurrent = () => null, ReadAccounts = () => vault.Data.Accounts,
                         QueryUsage = (account, token) => Task.FromResult<AccountUsage>(null),
                         WaitForRuntimeExit = token => Task.FromResult(0), ConfirmRuntimeQuiet = token => Task.FromResult(0),
-                        Apply = (account, expected) => { }, Launch = () => Task.FromResult(0),
+                        PrepareApply = (account, expected, token) => Task.FromResult<Action>(() => { }), Launch = () => Task.FromResult(0),
                         CancelQuotaWait = () => { cancelledQuotaWaits++; return Task.FromResult(0); }
                     });
                     typeof(MainView).GetField("vault", flags).SetValue(view, vault);

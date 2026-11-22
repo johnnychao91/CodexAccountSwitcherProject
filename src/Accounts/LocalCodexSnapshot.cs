@@ -5,12 +5,15 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace CodexAccountSwitcher
 {
     internal static class LocalCodexSnapshot
     {
         internal const string DirectoryName = "local-history-backups";
+        private const int CopyBufferSize = 1024 * 1024;
+        private const long LargeDatabaseSize = 1024L * 1024 * 1024;
         private static readonly Regex DatabaseName = new Regex(
             @"^(?:state|thread_history|memories(?:_v2)?|goals)_\d+\.sqlite(?:-wal|-journal)?$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -83,7 +86,8 @@ namespace CodexAccountSwitcher
             catch (UnauthorizedAccessException) { return false; }
         }
 
-        internal static void Save(string home, string sqliteHome, string storage, Action confirmQuiet)
+        internal static void Save(string home, string sqliteHome, string storage, Action confirmQuiet,
+            CancellationToken cancellation, IProgress<int> progress)
         {
             string temporary = null;
             try
@@ -93,6 +97,10 @@ namespace CodexAccountSwitcher
                 var files = FilesToSave(home, sqliteHome);
                 if (files.Count == 0) return;
                 var stamps = files.Values.Select(FileStamp).ToArray();
+                long totalBytes = stamps.Sum(stamp => stamp.Item1);
+                long copiedBytes = 0;
+                int reported = 0, fileIndex = 0;
+                var buffer = new byte[CopyBufferSize];
 
                 string directory = Path.Combine(storage, DirectoryName);
                 CheckLocalDirectory(directory);
@@ -100,25 +108,49 @@ namespace CodexAccountSwitcher
                 // Keep the private directory and filename within the legacy Windows path limit.
                 string archive = Path.Combine(directory, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" +
                     Guid.NewGuid().ToString("N").Substring(0, 16) + ".zip");
-                using (var output = new FileStream(archive + ".tmp", FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var output = new FileStream(archive + ".tmp", FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                    CopyBufferSize, FileOptions.SequentialScan))
                 {
                     temporary = archive + ".tmp";
                     using (var zip = new ZipArchive(output, ZipArchiveMode.Create, true))
                     {
                         foreach (var file in files)
                         {
+                            cancellation.ThrowIfCancellationRequested();
                             CheckRegular(file.Value);
-                            using (var source = new FileStream(file.Value, FileMode.Open, FileAccess.Read, FileShare.Read))
-                            using (var destination = zip.CreateEntry(file.Key, CompressionLevel.Fastest).Open())
-                                source.CopyTo(destination);
+                            long size = stamps[fileIndex++].Item1;
+                            // Store multi-gigabyte databases directly to keep desktop downtime bounded by disk I/O.
+                            var compression = size >= LargeDatabaseSize && file.Key.StartsWith("sqlite/", StringComparison.Ordinal)
+                                ? CompressionLevel.NoCompression : CompressionLevel.Fastest;
+                            using (var source = new FileStream(file.Value, FileMode.Open, FileAccess.Read, FileShare.Read,
+                                CopyBufferSize, FileOptions.SequentialScan))
+                            using (var destination = zip.CreateEntry(file.Key, compression).Open())
+                            {
+                                int read;
+                                while ((read = source.Read(buffer, 0, buffer.Length)) != 0)
+                                {
+                                    cancellation.ThrowIfCancellationRequested();
+                                    destination.Write(buffer, 0, read);
+                                    copiedBytes += read;
+                                    int percent = totalBytes == 0 ? 0 : (int)Math.Min(99, 100.0 * copiedBytes / totalBytes);
+                                    if (progress != null && percent > reported)
+                                    {
+                                        reported = percent;
+                                        progress.Report(percent);
+                                    }
+                                }
+                            }
                         }
                     }
+                    cancellation.ThrowIfCancellationRequested();
                     output.Flush(true);
                 }
+                cancellation.ThrowIfCancellationRequested();
                 confirmQuiet();
                 if (!files.SequenceEqual(FilesToSave(home, sqliteHome)) ||
                     !stamps.SequenceEqual(files.Values.Select(FileStamp)))
                     throw new IOException("Local history files changed while saving.");
+                cancellation.ThrowIfCancellationRequested();
                 File.Move(temporary, archive);
                 temporary = null;
             }

@@ -64,11 +64,11 @@ namespace CodexAccountSwitcher
                     },
                     WaitForRuntimeExit = token => { token.ThrowIfCancellationRequested(); Waits++; return Task.FromResult(0); },
                     ConfirmRuntimeQuiet = token => { token.ThrowIfCancellationRequested(); QuietChecks++; return Task.FromResult(0); },
-                    Apply = (target, expectedSourceId) =>
+                    PrepareApply = (target, expectedSourceId, token) => Task.FromResult<Action>(delegate
                     {
                         Check(Current.Id == expectedSourceId && target.Id != Current.Id, "The reset path rewrote the same account or changed an unexpected login.");
                         Applies++; Current = target;
-                    },
+                    }),
                     RetainCurrentAccount = target =>
                     {
                         Check(Current.Id == target.Id && Waits == 1 && QuietChecks == 1, "Retaining the source preceded runtime shutdown and final validation.");

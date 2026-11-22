@@ -114,11 +114,11 @@ namespace CodexAccountSwitcher
                         Waits++; Workflow.MarkQuiesced(); return Task.FromResult(0);
                     },
                     ConfirmRuntimeQuiet = token => { token.ThrowIfCancellationRequested(); return Task.FromResult(0); },
-                    Apply = (target, expected) =>
+                    PrepareApply = (target, expected, token) => Task.FromResult<Action>(delegate
                     {
                         Check(Current.Id == expected && target.Id != expected, "The credential operation was not a genuine account switch.");
                         Applies++; Current = target; Workflow.MarkAccountApplied(target);
-                    },
+                    }),
                     RetainCurrentAccount = target =>
                     {
                         Check(Current.Id == target.Id, "The retained account was not the source.");

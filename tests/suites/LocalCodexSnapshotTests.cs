@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Threading;
 
 namespace CodexAccountSwitcher
 {
@@ -88,6 +89,51 @@ namespace CodexAccountSwitcher
                 }
                 finally { Environment.SetEnvironmentVariable("CODEX_SQLITE_HOME", originalSetting); }
             });
+
+            test("Cancelling a background snapshot removes its temporary archive and preserves auth", delegate
+            {
+                var f = new Fixture(root);
+                string path = f.Put(f.Home, @"sessions\rollout-large.jsonl", "");
+                using (var stream = File.OpenWrite(path)) stream.SetLength(4 * 1024 * 1024);
+                var vault = new Vault(f.Storage);
+                var service = new SwitchService(vault, f.Home, () => false);
+                using (var cancellation = new CancellationTokenSource())
+                {
+                    var progress = new SnapshotProgress(percent =>
+                    {
+                        Check(percent > 0 && percent < 100);
+                        Check(Directory.GetFiles(f.Backups, "*.tmp").Length == 1);
+                        cancellation.Cancel();
+                    });
+                    bool cancelled = false;
+                    try { service.PrepareAsync(f.Target, false, null, cancellation.Token, progress).GetAwaiter().GetResult(); }
+                    catch (OperationCanceledException) { cancelled = true; }
+                    Check(cancelled && Directory.GetFiles(f.Backups).Length == 0);
+                    Check(File.ReadAllText(f.Auth) == f.Source && vault.Data.PreviousAuth == null);
+                }
+            });
+
+            test("A prepared switch rechecks auth before changing the vault or writing credentials", delegate
+            {
+                var f = new Fixture(root);
+                f.Put(f.Home, "history.jsonl", "fixture history");
+                var vault = new Vault(f.Storage);
+                var service = new SwitchService(vault, f.Home, () => false);
+                var commit = service.PrepareAsync(f.Target, false, null, CancellationToken.None, null).GetAwaiter().GetResult();
+                Check(Directory.GetFiles(f.Backups, "*.zip").Length == 1);
+                Check(File.ReadAllText(f.Auth) == f.Source && vault.Data.PreviousAuth == null);
+                string changed = SelfTests.Auth("history-a", "workspace", "a@example.com", "plus", "rotated");
+                File.WriteAllText(f.Auth, changed);
+                Reject(commit);
+                Check(File.ReadAllText(f.Auth) == changed && vault.Data.PreviousAuth == null);
+            });
+        }
+
+        private sealed class SnapshotProgress : IProgress<int>
+        {
+            private readonly Action<int> report;
+            internal SnapshotProgress(Action<int> report) { this.report = report; }
+            public void Report(int value) { report(value); }
         }
 
         private static string Read(ZipArchive zip, string name)

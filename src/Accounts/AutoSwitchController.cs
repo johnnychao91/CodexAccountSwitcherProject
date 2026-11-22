@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 
 namespace CodexAccountSwitcher
 {
-    public enum AutoSwitchState { Disabled, Monitoring, CheckingCurrent, CheckingCandidate, WaitingForQuota, WaitingForExit, Rechecking, Switching, Stopping, Faulted }
+    public enum AutoSwitchState { Disabled, Monitoring, CheckingCurrent, CheckingCandidate, WaitingForQuota, WaitingForExit, BackingUp, Rechecking, Switching, Stopping, Faulted }
 
     public sealed class AutoSwitchHost
     {
@@ -15,7 +15,7 @@ namespace CodexAccountSwitcher
         public Func<Account, CancellationToken, Task<AccountUsage>> QueryUsage { get; set; }
         public Func<CancellationToken, Task> WaitForRuntimeExit { get; set; }
         public Func<CancellationToken, Task> ConfirmRuntimeQuiet { get; set; }
-        public Action<Account, string> Apply { get; set; }
+        public Func<Account, string, CancellationToken, Task<Action>> PrepareApply { get; set; }
         public Func<Task> Launch { get; set; }
         public Func<Task> RestoreRuntimes { get; set; }
         public Func<Account, Account, Func<CancellationToken, Task>, CancellationToken, Task> PrepareContinuation { get; set; }
@@ -51,7 +51,7 @@ namespace CodexAccountSwitcher
         public AutoSwitchController(AutoSwitchHost host)
         {
             if (host == null || host.ReadCurrent == null || host.ReadAccounts == null || host.QueryUsage == null
-                || host.WaitForRuntimeExit == null || host.ConfirmRuntimeQuiet == null || host.Apply == null || host.Launch == null)
+                || host.WaitForRuntimeExit == null || host.ConfirmRuntimeQuiet == null || host.PrepareApply == null || host.Launch == null)
                 throw new ArgumentException("The automatic switch host is incomplete.", "host");
             this.host = host;
             State = AutoSwitchState.Disabled;
@@ -260,12 +260,22 @@ namespace CodexAccountSwitcher
             await host.WaitForRuntimeExit(token);
             token.ThrowIfCancellationRequested();
 
+            Action commit = null;
+            if (candidate.Id != attempt.SourceId)
+            {
+                if (!StillCurrent(attempt.SourceId) || !SameCandidates(ordered, ReadAccounts(), attempt.SourceId))
+                    return "登入或候選帳號已變更，未套用候選帳號。";
+                SetState(AutoSwitchState.BackingUp, "正在備份本機對話與記憶…", attempt.SourceId, candidate.Id);
+                commit = await host.PrepareApply(candidate, attempt.SourceId, token);
+                token.ThrowIfCancellationRequested();
+            }
+
             current = ReadCurrent();
             if (!ValidAccount(current) || current.Id != attempt.SourceId || Find(ReadAccounts(), current.Id) == null)
                 return "目前登入已變更，未套用候選帳號。";
             if (!SameCandidates(ordered, ReadAccounts(), current.Id)) return "候選帳號或順序已變更，等待下次重新檢查。";
             SetState(AutoSwitchState.Rechecking, "正在再次確認目前與候選帳號額度…", current.Id, candidate.Id);
-            // Use the active account's latest token after shutdown; same-identity rotation is normal.
+            // Recheck after backup so large histories cannot consume the quota freshness window.
             currentUsage = await QueryAsync(current, token);
             if (!StillCurrent(current.Id) || !UsableSource(currentUsage, attempt.QuotaRecovery))
                 return "目前帳號已恢復額度或狀態改變，未套用候選帳號。";
@@ -296,7 +306,7 @@ namespace CodexAccountSwitcher
                     return "額度資料已過期或已到重設時間，未變更登入。";
                 // No await between the final check and commit. The host checks expected identity atomically with its write.
                 if (candidate.Id == attempt.SourceId) host.RetainCurrentAccount(candidate);
-                else host.Apply(candidate, attempt.SourceId);
+                else commit();
                 attempt.Committed = true;
             }
             // A stop after commit must still await runtime recovery. Do not pass the cancelled token.

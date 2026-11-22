@@ -41,12 +41,12 @@ namespace CodexAccountSwitcher
                     QueryUsage = Query,
                     WaitForRuntimeExit = token => { token.ThrowIfCancellationRequested(); Check(OwnedQueries == 0, "A query process was still owned while waiting for runtimes."); Waits++; return Task.FromResult(0); },
                     ConfirmRuntimeQuiet = token => { token.ThrowIfCancellationRequested(); Check(OwnedQueries == 0, "A query process was still owned during the final quiet check."); QuietChecks++; return Task.FromResult(0); },
-                    Apply = (target, expectedSourceId) =>
+                    PrepareApply = (target, expectedSourceId, token) => Task.FromResult<Action>(delegate
                     {
                         Check(OwnedQueries == 0, "A query process survived until Apply.");
                         Check(Current.Id == expectedSourceId, "Apply received an unexpected source identity.");
                         Applies++; Current = target;
-                    },
+                    }),
                     Launch = () => { Launches++; return Task.FromResult(0); },
                     RestoreRuntimes = () => { Restores++; return Task.FromResult(0); }
                 };
@@ -281,9 +281,36 @@ namespace CodexAccountSwitcher
                 await Finish(f.Controller.StopAsync()); await Finish(flight);
                 Check(f.Applies == 0 && f.Restores == 1, "A cancelled final check still applied credentials.");
             }); });
+            test("Stopping during the history backup prevents commit and restores runtimes", delegate { Run(async delegate
+            {
+                var f = new Fixture(); var backingUp = Signal();
+                f.Host.PrepareApply = async (target, expected, token) =>
+                {
+                    backingUp.TrySetResult(true);
+                    await Task.Delay(Timeout.Infinite, token);
+                    throw new Exception("The backup was not cancelled.");
+                };
+                f.Controller.Enable(); var flight = f.Controller.TickAsync(); await Finish(backingUp.Task);
+                await Finish(f.Controller.StopAsync()); await Finish(flight);
+                Check(f.Applies == 0 && f.Launches == 0 && f.Restores == 1, "Cancelling backup still committed or left runtimes closed.");
+            }); });
+            test("An automatic switch rechecks quota after a backup longer than the freshness window", delegate { Run(async delegate
+            {
+                var f = new Fixture();
+                var prepare = f.Host.PrepareApply;
+                f.Host.PrepareApply = (target, expected, token) =>
+                {
+                    Check(f.Queries.Count == 2 && f.Waits == 1, "Backup should follow shutdown and precede the quota recheck.");
+                    f.Now = f.Now.AddMinutes(3);
+                    return prepare(target, expected, token);
+                };
+                await f.Start();
+                Check(f.Queries.Count == 4 && f.Applies == 1 && f.Launches == 1, "A long backup prevented a switch with fresh quota.");
+            }); });
             test("Apply or launch failures disable monitoring and attempt recovery once", delegate { Run(async delegate
             {
-                var apply = new Fixture(); apply.Host.Apply = (target, expected) => { throw new Exception("synthetic-apply-detail"); };
+                var apply = new Fixture();
+                apply.Host.PrepareApply = (target, expected, token) => Task.FromResult<Action>(() => { throw new Exception("synthetic-apply-detail"); });
                 await apply.Start();
                 Check(!apply.Controller.Enabled && apply.Controller.State == AutoSwitchState.Faulted && apply.Restores == 1 && apply.Launches == 0, "Apply failure did not stop and restore.");
                 var launch = new Fixture(); launch.Host.Launch = () => { launch.Launches++; throw new Exception("synthetic-launch-detail"); };
@@ -294,8 +321,12 @@ namespace CodexAccountSwitcher
             test("A stop requested inside commit still completes launch without another restoration", delegate { Run(async delegate
             {
                 var f = new Fixture(); Task stopped = null;
-                var apply = f.Host.Apply;
-                f.Host.Apply = (target, expected) => { apply(target, expected); stopped = f.Controller.StopAsync(); };
+                var prepare = f.Host.PrepareApply;
+                f.Host.PrepareApply = async (target, expected, token) =>
+                {
+                    var commit = await prepare(target, expected, token);
+                    return delegate { commit(); stopped = f.Controller.StopAsync(); };
+                };
                 await f.Start(); await Finish(stopped);
                 Check(f.Applies == 1 && f.Launches == 1 && f.Restores == 0 && !f.Controller.Enabled, "A stop after commit left the runtimes closed.");
             }); });

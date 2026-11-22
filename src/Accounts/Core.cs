@@ -412,7 +412,17 @@ namespace CodexAccountSwitcher
         private readonly Func<bool> busy;
         public SwitchService(Vault vault, string home, Func<bool> busy) { this.vault = vault; this.home = home; this.busy = busy; }
         public void Apply(string targetRaw, bool restoring = false, string expectedSourceId = null)
+        { Prepare(targetRaw, restoring, expectedSourceId, CancellationToken.None, null)(); }
+
+        public Task<Action> PrepareAsync(string targetRaw, bool restoring, string expectedSourceId,
+            CancellationToken cancellation, IProgress<int> progress)
         {
+            return Task.Run(() => Prepare(targetRaw, restoring, expectedSourceId, cancellation, progress), cancellation);
+        }
+
+        private Action Prepare(string targetRaw, bool restoring, string expectedSourceId, CancellationToken cancellation, IProgress<int> progress)
+        {
+            cancellation.ThrowIfCancellationRequested();
             Account target = Account.Parse(targetRaw);
             Installation.CheckConfig(home, target);
             if (busy()) throw new UserError("仍有 Codex 桌面、VS Code 擴充功能或 CLI 程序正在執行，尚未套用帳號。請關閉對應來源後再試。");
@@ -422,20 +432,26 @@ namespace CodexAccountSwitcher
                 throw new UserError("目前帳號已被其他程式變更，已停止自動切換，登入資料未修改。");
             var savedTarget = vault.Data.Accounts.FirstOrDefault(a => a.Id == target.Id);
             bool freshLogin = savedTarget != null && savedTarget.PendingLogin && savedTarget.Auth == targetRaw;
-            if (old != null && Account.Parse(old).Id == target.Id && !freshLogin && !restoring)
-            {
-                // A saved copy of the active account may have an obsolete refresh token.
-                vault.Upsert(old, null); vault.Save(); return;
-            }
-            if (!Directory.Exists(home)) throw new UserError("找不到 Codex 資料夾，請先啟動 Codex 並登入。");
-            string sqliteHome = LocalCodexSnapshot.SqliteHome(home);
-            var sidebar = ProjectSidebar.Prepare(home, old, targetRaw, sqliteHome);
             Action confirmQuiet = delegate
             {
                 if (busy() || Files.ReadAuth(path) != old)
                     throw new UserError("登入狀態剛剛改變，已取消切換。請完全結束 Codex 後重試。");
             };
-            LocalCodexSnapshot.Save(home, sqliteHome, vault.DirectoryPath, confirmQuiet);
+            if (old != null && Account.Parse(old).Id == target.Id && !freshLogin && !restoring)
+            {
+                // A saved copy of the active account may have an obsolete refresh token.
+                return delegate { confirmQuiet(); vault.Upsert(old, null); vault.Save(); };
+            }
+            if (!Directory.Exists(home)) throw new UserError("找不到 Codex 資料夾，請先啟動 Codex 並登入。");
+            string sqliteHome = LocalCodexSnapshot.SqliteHome(home);
+            var sidebar = ProjectSidebar.Prepare(home, old, targetRaw, sqliteHome);
+            LocalCodexSnapshot.Save(home, sqliteHome, vault.DirectoryPath, confirmQuiet, cancellation, progress);
+            return () => Commit(target, targetRaw, old, path, sidebar, confirmQuiet);
+        }
+
+        private void Commit(Account target, string targetRaw, string old, string path, ProjectSidebar sidebar, Action confirmQuiet)
+        {
+            confirmQuiet();
             if (old != null)
             {
                 // Keep a newly logged-in session when replacing the same user's old session.

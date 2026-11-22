@@ -1,6 +1,6 @@
 # Codex Roster
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.21\CodexRoster.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.22\CodexRoster.exe`。
 
 ## 新電腦開始使用
 
@@ -9,6 +9,11 @@ Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 
 3. 在新電腦重新登入並加入帳號。本機加密帳號庫不會隨 Git 複製，也不能直接從另一台電腦搬過來。
 
 開啟 Roster 時，桌面控制會自動嘗試接管 Codex。要依額度切換帳號，可勾選「自動切換帳號」。「進階選項」提供自動續跑、工作狀態與 VS Code 整合。
+
+## v1.6.22
+
+- 修正大型本機歷史備份造成切換視窗無法回應。備份會在背景執行並顯示進度，套用登入前可取消。大型 SQLite 檔案會以未壓縮方式放入完整的復原 ZIP，縮短 Codex 關閉的時間。
+- 自動切換在備份完成後重新查詢額度，再套用登入並恢復 Codex。
 
 ## v1.6.21
 
@@ -319,7 +324,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在 Roster 展開「進階選項」，選「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.21\codex-account-switcher-vscode.vsix`。
+1. 在 Roster 展開「進階選項」，選「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.22\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Roster: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。

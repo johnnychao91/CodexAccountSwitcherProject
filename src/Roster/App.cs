@@ -110,7 +110,7 @@ namespace CodexAccountSwitcher
         private RuntimeCoordinator runtimes;
         private DesktopContinuationWorkflow continuation;
         private bool monitorRequested, suppressMonitorChange, manualOperation, manualFailed, closing;
-        private bool startupQuitRequested;
+        private bool startupQuitRequested, finishingSwitch;
         private bool OperationsBusy { get { return busy || manualOperation; } }
         private bool demoDesktopControlRequested = true, desktopStateQuery, desktopAutoStartChecking;
         private bool desktopConnected;
@@ -163,7 +163,17 @@ namespace CodexAccountSwitcher
             Window.Closing += async delegate(object sender, System.ComponentModel.CancelEventArgs args)
             {
                 if (closing) return;
-                if (busy || manualOperation) { args.Cancel = true; if (cancellation != null) cancellation.Cancel(); Status("正在取消操作，完成後即可關閉。"); return; }
+                if (busy || manualOperation)
+                {
+                    args.Cancel = true;
+                    if (finishingSwitch) Status("正在完成帳號切換，完成後即可關閉。");
+                    else
+                    {
+                        if (cancellation != null) cancellation.Cancel();
+                        Status("正在取消操作，完成後即可關閉。");
+                    }
+                    return;
+                }
                 if (automatic != null && automatic.IsRunning)
                 {
                     args.Cancel = true; closing = true; monitorTimer.Stop();
@@ -238,10 +248,16 @@ namespace CodexAccountSwitcher
                     continuation.MarkQuiesced();
                 },
                 ConfirmRuntimeQuiet = runtimes.ConfirmQuietAsync,
-                Apply = (target, expectedId) =>
+                PrepareApply = async (target, expectedId, token) =>
                 {
-                    new SwitchService(vault, home, runtimes.CredentialProcessesRunning).Apply(target.Auth, false, expectedId);
-                    continuation.MarkAccountApplied(target);
+                    var progress = new Progress<int>(percent =>
+                    {
+                        if (!token.IsCancellationRequested && automatic.State == AutoSwitchState.BackingUp)
+                            Element<TextBlock>("AutoStatus").Text = "正在備份本機對話與記憶… " + percent + "%";
+                    });
+                    var commit = await new SwitchService(vault, home, runtimes.CredentialProcessesRunning)
+                        .PrepareAsync(target.Auth, false, expectedId, token, progress);
+                    return delegate { commit(); continuation.MarkAccountApplied(target); };
                 },
                 Launch = async delegate { Refresh(); await runtimes.RestoreAsync(); if (runtimes.DesktopWasRunning) await runtimes.LaunchDesktopAsync(Installation.DesktopExe()); },
                 ContinueAfterSwitch = (target, token) => continuation.ContinueAsync(target, token),
@@ -834,7 +850,7 @@ namespace CodexAccountSwitcher
             List.IsEnabled = operationsReady;
             bool autoRunning = automatic != null && automatic.IsRunning;
             Element<Button>("OpenAppButton").IsEnabled = !demo && runtimes != null && operationsReady && !autoRunning;
-            Element<Button>("CancelButton").IsEnabled = busy || autoRunning;
+            Element<Button>("CancelButton").IsEnabled = !finishingSwitch && (busy || autoRunning);
             Element<StackPanel>("ProgressActions").Visibility = busy || autoRunning ? Visibility.Visible : Visibility.Collapsed;
             Element<CheckBox>("MonitorCheck").IsEnabled = !demo && vault != null && operationsReady;
             Element<CheckBox>("InterruptCheck").IsEnabled = !demo && vault != null && operationsReady && !autoRunning;
@@ -1055,9 +1071,20 @@ namespace CodexAccountSwitcher
                 Status("正在檢查工作狀態。確認閒置後，會自動關閉受管 Codex 後端並套用選取帳號。");
                 await runtimes.WaitForManualExitAsync(
                     text => Window.Dispatcher.Invoke(new Action(() => Status("尚未套用選取帳號。\n" + text + "\n手動切換會等待對話與背景工作結束，再自動關閉受管後端；可按取消。"))), cancellation.Token);
-                cancellation.Token.ThrowIfCancellationRequested();
+                var token = cancellation.Token;
+                Status("正在備份本機對話與記憶，可按取消。");
+                var progress = new Progress<int>(percent =>
+                {
+                    if (!token.IsCancellationRequested && busy && !finishingSwitch)
+                        Status("正在備份本機對話與記憶… " + percent + "%，可按取消。");
+                });
+                var commit = await new SwitchService(vault, home, runtimes.CredentialProcessesRunning)
+                    .PrepareAsync(raw, restoring, sourceId, token, progress);
+                token.ThrowIfCancellationRequested();
+                finishingSwitch = true;
                 Element<Button>("CancelButton").IsEnabled = false;
-                new SwitchService(vault, home, runtimes.CredentialProcessesRunning).Apply(raw, restoring, sourceId);
+                Status("正在套用帳號並恢復 Codex…");
+                commit();
                 applied = true; Refresh();
                 await runtimes.RestoreAsync(); recovered = true;
                 await runtimes.LaunchDesktopAsync(desktop);
@@ -1075,7 +1102,7 @@ namespace CodexAccountSwitcher
                 try { await runtimes.RestoreAsync(); }
                 catch { manualFailed = true; Status("程式恢復未完成，請檢查桌面整合或手動重新載入 VS Code。"); }
             }
-            busy = false; cancellation.Dispose(); cancellation = null; UpdateButtons();
+            finishingSwitch = false; busy = false; cancellation.Dispose(); cancellation = null; UpdateButtons();
         }
         private void LoadDemo()
         {
