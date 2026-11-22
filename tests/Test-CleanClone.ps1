@@ -110,8 +110,10 @@ $launcherText = [IO.File]::ReadAllText((Join-Path $clone 'Codex帳號切換器.c
 if (!$launcherText.Contains("`r`n") -or $launcherText -match '(?<!\r)\n') {
     throw 'A clean checkout must retain Windows line endings for the batch launcher.'
 }
-$releases = @(Get-ChildItem -LiteralPath $clone -Directory -Filter 'dist-*')
-if ($releases.Count -ne 0 -or (Test-Path -LiteralPath (Join-Path $clone 'tests\bin'))) { throw 'Clone contains build artifacts.' }
+if ((Test-Path -LiteralPath (Join-Path $clone 'release')) -or
+    (Test-Path -LiteralPath (Join-Path $clone 'legacy')) -or
+    (Test-Path -LiteralPath (Join-Path $clone 'artifacts')) -or
+    (Test-Path -LiteralPath (Join-Path $clone 'tests\bin'))) { throw 'Clone contains build artifacts.' }
 Invoke-Launcher '--unknown-test-option' 2
 Invoke-Launcher '--build-only extra' 2
 $failureFixture = Join-Path $work 'failed build fixture'
@@ -123,8 +125,11 @@ Invoke-Launcher '--build-only' 1 $failureFixture
 [IO.File]::WriteAllText((Join-Path $failureFixture 'build.ps1'), 'exit 0')
 Invoke-Launcher '--build-only' 1 $failureFixture
 Invoke-Launcher
-$releases = @(Get-ChildItem -LiteralPath $clone -Directory -Filter 'dist-*')
-if ($releases.Count -ne 1) { throw 'Expected one newly built release.' }
+$releaseRoot = Join-Path $clone 'release'
+$releases = @(Get-ChildItem -LiteralPath $releaseRoot -Force)
+if ($releases.Count -ne 1 -or -not $releases[0].PSIsContainer -or $releases[0].Name -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw 'Expected exactly one versioned release directory.'
+}
 $release = $releases[0].FullName
 Assert-Release
 

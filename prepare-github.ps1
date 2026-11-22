@@ -9,25 +9,25 @@ if ([string]::IsNullOrWhiteSpace($Destination)) {
 }
 $targetRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination).TrimEnd('\', '/')
 $files = @(
-    '.gitattributes', '.gitignore', 'App.config', 'App.cs', 'build.ps1', 'Codex帳號切換器.cmd',
-    'Core.cs', 'DesktopLauncher.cs', 'MainWindow.xaml', 'ProcessInspector.cs',
-    'codex-roster-transparent.png', 'RosterIcon.ico',
-    'ProcessInspectorTests.cs', 'README.md', 'SelfTests.cs', 'SwitchWorkflow.cs',
-    'ProjectSidebar.cs', 'ProjectSidebarTests.cs',
-    'SwitchWorkflowTests.cs', 'tests/FakeCodex.cs', 'tests/LaunchProbe.cs',
-    'tests/ProcessProbe.cs', 'prepare-github.ps1', 'UsageModels.cs', 'UsageModelTests.cs',
-    'UsageSession.cs', 'UsageSessionTests.cs', 'tests/FakeUsageCodex.cs',
-    'AccountOrderTests.cs', 'AccountUiTests.cs', 'docs/runtime-control-validation.md',
-    'AutoSwitchController.cs', 'AutoSwitchTests.cs', 'QuotaResetTests.cs', 'QuotaResetIntegrationTests.cs', 'ManagedRuntimeClient.cs', 'ManagedRuntimeClientTests.cs',
-    'ManagedBridge.cs', 'ManagedBridgeProgram.cs', 'ManagedBridgeTests.cs',
-    'tests/FakeManagedBackend.cs', 'tests/CompanionTests.js', 'tests/Test-CleanClone.ps1', 'tests/Test-ContinuationProtocol.js', 'tests/Test-CurrentProtocol.js',
-    'DesktopNative.cs', 'DesktopNativeTests.cs', 'DesktopLocalWorkPolicy.cs', 'DesktopLocalWorkPolicyTests.cs', 'DesktopWebSocket.cs', 'DesktopWebSocketTests.cs',
-    'DesktopArchiveCompatibility.cs',
-    'DesktopSession.cs', 'DesktopSessionTests.cs', 'DesktopHostProgram.cs', 'DesktopRuntimeCoordinator.cs', 'DesktopAutoStart.cs', 'DesktopAutoStartTests.cs',
-    'desktop-start.ps1', 'tests/FakeDesktopApp.cs',
-    'ContinuationTicket.cs', 'ContinuationTicketTests.cs', 'ContinuationAdmission.cs', 'ContinuationAdmissionTests.cs',
-    'DesktopConversationClient.cs', 'DesktopConversationClientTests.cs', 'DesktopContinuationWorkflow.cs', 'DesktopContinuationWorkflowTests.cs',
-    'DesktopAppRelay.cs', 'DesktopAppRelayTests.cs',
+    '.gitattributes', '.gitignore', 'src/Roster/App.config', 'src/Roster/App.cs', 'build.ps1', 'Codex帳號切換器.cmd',
+    'src/Accounts/Core.cs', 'src/Desktop/DesktopLauncher.cs', 'src/Roster/MainWindow.xaml', 'src/Runtime/ProcessInspector.cs',
+    'assets/codex-roster-transparent.png', 'assets/RosterIcon.ico',
+    'tests/suites/ProcessInspectorTests.cs', 'README.md', 'tests/suites/SelfTests.cs', 'src/Accounts/SwitchWorkflow.cs',
+    'src/Accounts/ProjectSidebar.cs', 'tests/suites/ProjectSidebarTests.cs',
+    'tests/suites/SwitchWorkflowTests.cs', 'tests/fixtures/FakeCodex.cs', 'tests/fixtures/LaunchProbe.cs',
+    'tests/fixtures/ProcessProbe.cs', 'prepare-github.ps1', 'src/Accounts/UsageModels.cs', 'tests/suites/UsageModelTests.cs',
+    'src/Accounts/UsageSession.cs', 'tests/suites/UsageSessionTests.cs', 'tests/fixtures/FakeUsageCodex.cs',
+    'tests/suites/AccountOrderTests.cs', 'tests/suites/AccountUiTests.cs', 'docs/runtime-control-validation.md',
+    'src/Accounts/AutoSwitchController.cs', 'tests/suites/AutoSwitchTests.cs', 'tests/suites/QuotaResetTests.cs', 'tests/suites/QuotaResetIntegrationTests.cs', 'src/Runtime/ManagedRuntimeClient.cs', 'tests/suites/ManagedRuntimeClientTests.cs',
+    'src/Runtime/ManagedBridge.cs', 'src/Runtime/ManagedBridgeProgram.cs', 'tests/suites/ManagedBridgeTests.cs',
+    'tests/fixtures/FakeManagedBackend.cs', 'tests/CompanionTests.js', 'tests/Test-CleanClone.ps1', 'tests/Test-ContinuationProtocol.js', 'tests/Test-CurrentProtocol.js',
+    'src/Desktop/DesktopNative.cs', 'tests/suites/DesktopNativeTests.cs', 'src/Desktop/DesktopLocalWorkPolicy.cs', 'tests/suites/DesktopLocalWorkPolicyTests.cs', 'src/Desktop/DesktopWebSocket.cs', 'tests/suites/DesktopWebSocketTests.cs',
+    'src/Desktop/DesktopArchiveCompatibility.cs',
+    'src/Desktop/DesktopSession.cs', 'tests/suites/DesktopSessionTests.cs', 'src/Desktop/DesktopHostProgram.cs', 'src/Desktop/DesktopRuntimeCoordinator.cs', 'src/Desktop/DesktopAutoStart.cs', 'tests/suites/DesktopAutoStartTests.cs',
+    'src/Desktop/desktop-start.ps1', 'tests/fixtures/FakeDesktopApp.cs',
+    'src/Desktop/ContinuationTicket.cs', 'tests/suites/ContinuationTicketTests.cs', 'src/Desktop/ContinuationAdmission.cs', 'tests/suites/ContinuationAdmissionTests.cs',
+    'src/Desktop/DesktopConversationClient.cs', 'tests/suites/DesktopConversationClientTests.cs', 'src/Desktop/DesktopContinuationWorkflow.cs', 'tests/suites/DesktopContinuationWorkflowTests.cs',
+    'src/Desktop/DesktopAppRelay.cs', 'tests/suites/DesktopAppRelayTests.cs',
     'integrations/vscode/package.json', 'integrations/vscode/extension.js', 'integrations/vscode/README.md',
     'integrations/vscode/pack.ps1', 'integrations/vscode/extension.vsixmanifest', 'integrations/vscode/[Content_Types].xml'
 )
@@ -94,7 +94,7 @@ foreach ($relative in $files) {
     $hashBefore = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
     # Binary image assets are hash-verified and copied, but are not text-scanned.
     $lines = @()
-    if ($relative -notin @('codex-roster-transparent.png', 'RosterIcon.ico')) { $lines = [IO.File]::ReadAllLines($sourceFile) }
+    if ($relative -notin @('assets/codex-roster-transparent.png', 'assets/RosterIcon.ico')) { $lines = [IO.File]::ReadAllLines($sourceFile) }
     for ($index = 0; $index -lt $lines.Length; $index++) {
         foreach ($match in [regex]::Matches($lines[$index], $emailPattern)) {
             if ($match.Groups[1].Value -notmatch $exampleDomain) {

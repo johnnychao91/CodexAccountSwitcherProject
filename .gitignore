@@ -1,6 +1,9 @@
 # Build output and local investigation artifacts
 /dist/
 /dist-*/
+/release/
+/legacy/
+/artifacts/
 /research/
 /tests/bin/
 bin/

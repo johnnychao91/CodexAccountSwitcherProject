@@ -1,6 +1,6 @@
 # Codex 帳號切換器
 
-Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `dist-v1.6.19\CodexAccountSwitcher.exe`。
+Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.19\CodexAccountSwitcher.exe`。
 
 ## 新電腦開始使用
 
@@ -302,7 +302,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 此整合可選用，限本機 Windows 原生 Codex 後端；不支援 Remote / WSL 視窗。安裝擴充套件本身不會啟用控制。
 
-1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `dist-v1.6.19\codex-account-switcher-vscode.vsix`。
+1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.19\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
 3. 執行 `Codex Account Switcher: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。
@@ -388,7 +388,23 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 ## 開發與驗證
 
-在專案目錄執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，使用 Windows 內建的 .NET Framework C# 編譯器。沒有 NuGet 相依套件。主要原始碼為 `Core.cs`、`DesktopLauncher.cs`、`ProcessInspector.cs`、`SwitchWorkflow.cs`、`App.cs`、`UsageModels.cs`、`UsageSession.cs` 和內嵌的 `MainWindow.xaml`；自動切換與 VS Code 整合位於 `AutoSwitchController.cs`、`ManagedRuntimeClient.cs`、`ManagedBridge.cs` 及 `integrations/vscode`。桌面整合位於 `DesktopRuntimeCoordinator.cs`、`DesktopSession.cs`、`DesktopHostProgram.cs`、`DesktopNative.cs`、`DesktopWebSocket.cs`、`DesktopAppRelay.cs` 及 `desktop-start.ps1`。桌面續聊由 `DesktopContinuationWorkflow.cs`、`DesktopConversationClient.cs`、`ContinuationTicket.cs` 與 `ContinuationAdmission.cs` 處理。程序診斷使用 Windows WMI 與原生 API，只讀取程序名稱、PID、父程序、工作階段、建立時間及執行檔路徑；受管整合另核對管線與 TCP peer 的擁有者，不讀取命令列或記憶體內容。無法確認程序狀態時停止切換。
+在專案目錄執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，使用 Windows 內建的 .NET Framework C# 編譯器，無需 NuGet。
+
+| 目錄 | 內容 |
+| --- | --- |
+| `src/Roster/` | WPF 主視窗、介面與程式設定 |
+| `src/Accounts/` | 帳號庫、額度查詢、排序與切換流程 |
+| `src/Desktop/` | 受管桌面、套件啟動、工作狀態與續跑 |
+| `src/Runtime/` | 程序辨識與 VS Code 受管後端 |
+| `assets/` | 內嵌 Logo 與 Windows 圖示 |
+| `tests/suites/`、`tests/fixtures/` | C# 測試與模擬程式。驗證腳本在 `tests/`，編譯產物在 `tests/bin/`。 |
+| `integrations/vscode/`、`docs/` | VS Code 擴充套件與驗證文件 |
+| `release/`、`legacy/` | 目前發行版與舊版封存。兩者都是本機產物。 |
+| `artifacts/` | 本機畫面預覽與驗證留存 |
+
+發佈新版時，將前一版移至 `legacy/`，讓 `release/` 只留下目前使用的版本。若有程序或 VS Code 整合仍指向原發行路徑，先保留該路徑，等程序正常退出或重新綁定後再移動。
+
+程序診斷使用 Windows WMI 與原生 API，只讀取程序名稱、PID、父程序、工作階段、建立時間及執行檔路徑；受管整合另核對管線與 TCP peer 的擁有者，不讀取命令列或記憶體內容。無法確認程序狀態時停止切換。
 
 驗證全新 Git 下載與建置（需要 Git；不會開啟 Codex 或帳號切換器視窗）：
 
