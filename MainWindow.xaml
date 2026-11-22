@@ -21,9 +21,7 @@
       <Grid Margin="26,34,22,27">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel>
-          <Border Background="{x:Static roster:RosterTheme.Cream}" BorderBrush="{x:Static roster:RosterTheme.Gold}" BorderThickness="1" CornerRadius="14" Padding="8" Margin="0,0,0,18">
-            <Image x:Name="RosterLogo" Width="142" Height="142" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Codex Roster"/>
-          </Border>
+          <Image x:Name="RosterLogo" Width="142" Height="142" Margin="0,0,0,18" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Codex Roster"/>
           <Border Background="{x:Static roster:RosterTheme.Primary}" CornerRadius="9" Padding="14,13"><TextBlock Text="我的帳號" Foreground="White" FontWeight="SemiBold"/></Border>
           <TextBlock x:Name="AccountCount" Text="0 個已儲存帳號" Foreground="{x:Static roster:RosterTheme.Muted}" Margin="14,14,0,0" FontSize="12"/>
         </StackPanel>
@@ -31,7 +29,7 @@
           <TextBlock Text="只在這台電腦保存" Foreground="{x:Static roster:RosterTheme.Primary}" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="使用 Windows 使用者加密，&#10;不需要提供密碼給本工具。" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="12" LineHeight="22" TextWrapping="Wrap"/>
           <Border Height="1" Background="{x:Static roster:RosterTheme.Gold}" Margin="0,21,0,16"/>
-          <TextBlock Text="獨立工具 · v1.6.18&#10;適用 Windows 桌面版" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11" LineHeight="19"/>
+          <TextBlock Text="獨立工具 · v1.6.19&#10;適用 Windows 桌面版" Foreground="{x:Static roster:RosterTheme.Muted}" FontSize="11" LineHeight="19"/>
         </StackPanel>
       </Grid>
     </Border>
@@ -40,12 +38,7 @@
       <Grid Margin="0,0,0,23">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
         <StackPanel><TextBlock Text="讓帳號切換更簡單" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="手動安排優先順序，依剩餘額度選擇帳號。" Foreground="{x:Static roster:RosterTheme.Muted}" Margin="0,7,0,0"/></StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-          <Button x:Name="AddButton" Content="＋ 新增帳號" VerticalAlignment="Center" Background="{x:Static roster:RosterTheme.Primary}" Foreground="White" BorderBrush="{x:Static roster:RosterTheme.Primary}"/>
-          <Border Width="40" Height="40" CornerRadius="10" BorderBrush="{x:Static roster:RosterTheme.SoftGold}" BorderThickness="1" Background="{x:Static roster:RosterTheme.Surface}" Margin="12,0,0,0">
-            <Image x:Name="RosterHeaderIcon" Width="31" Height="31" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-          </Border>
-        </StackPanel>
+        <Button x:Name="AddButton" Grid.Column="1" Content="＋ 新增帳號" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="12,0,0,0" Background="{x:Static roster:RosterTheme.Primary}" Foreground="White" BorderBrush="{x:Static roster:RosterTheme.Primary}"/>
       </Grid>
       <Border Grid.Row="1" Background="{x:Static roster:RosterTheme.Surface}" BorderBrush="{x:Static roster:RosterTheme.SoftGold}" BorderThickness="1" CornerRadius="14" Padding="23,19" Margin="0,0,0,24">
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

@@ -15,7 +15,7 @@ foreach ($assembly in @('PresentationFramework.dll', 'PresentationCore.dll', 'Wi
         throw "The .NET Framework WPF assembly $assembly was not found in $wpf. Install or repair .NET Framework 4.8."
     }
 }
-$release = Join-Path $projectRoot 'dist-v1.6.18'
+$release = Join-Path $projectRoot 'dist-v1.6.19'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
 $app = Join-Path $release 'CodexAccountSwitcher.exe'
 $argsList = @('/nologo', '/target:winexe', '/main:CodexAccountSwitcher.Program', '/platform:x64', '/optimize+', '/codepage:65001',

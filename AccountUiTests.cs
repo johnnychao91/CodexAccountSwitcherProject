@@ -20,16 +20,16 @@ namespace CodexAccountSwitcher
         }
         public static void Register(Action<string, Action> test)
         {
-            test("Brand artwork appears in the sidebar, upper-right header and window chrome", delegate
+            test("Brand artwork has an unframed sidebar logo and a native window icon", delegate
             {
                 var view = new MainView(true);
                 try
                 {
                     var logo = (Image)view.Window.FindName("RosterLogo");
-                    var headerIcon = (Image)view.Window.FindName("RosterHeaderIcon");
                     var icon = (System.Windows.Media.Imaging.BitmapSource)view.Window.Icon;
                     Check(logo.Source.Width > logo.Width && logo.Width >= 128);
-                    Check(ReferenceEquals(headerIcon.Source, icon) && icon.PixelWidth == 32);
+                    Check(LogicalTreeHelper.GetParent(logo) is StackPanel && view.Window.FindName("RosterHeaderIcon") == null);
+                    Check(icon.PixelWidth == 32);
                     Check(ReferenceEquals(view.Window.Background, RosterTheme.Cream));
                     Check(ReferenceEquals(Button(view, "AddButton").Background, RosterTheme.Primary));
                     new System.Windows.Interop.WindowInteropHelper(view.Window).EnsureHandle();
