@@ -8,7 +8,7 @@
 
 1. 保留發行資料夾中的 `CodexAccountSwitcher.exe` 與 `ManagedBridge.exe`，兩者必須位於同一資料夾。
 2. 在 VS Code 執行 **Extensions: Install from VSIX…**，選取發行資料夾中的 `codex-account-switcher-vscode.vsix`。
-3. 執行 **Codex Account Switcher: Enable Experimental Integration**，選取 `ManagedBridge.exe`，閱讀並確認啟用提示。
+3. 執行 **Codex Roster: Enable Experimental Integration**，選取 `ManagedBridge.exe`，閱讀並確認啟用提示。
 4. 等待目前 Codex 工作結束，再按 **Reload Window**。只有重新啟動後由代理持有的後端才可控制。
 
 此功能使用官方標為 development-only 的 `chatgpt.cliExecutable`。該設定具有 application scope，可能影響這個 VS Code 安裝的其他視窗與設定檔下次啟動 Codex 的方式。整合透過 VS Code 設定 API 更新值，保留 `settings.json` 的註解和其他設定。
@@ -28,7 +28,7 @@
 
 ## 停用與復原
 
-執行 **Codex Account Switcher: Disable Experimental Integration**：
+執行 **Codex Roster: Disable Experimental Integration**：
 
 - 立即撤銷受管後端的中止與暫停控制權；既有 stdio 傳輸仍可繼續服務。
 - 若 `chatgpt.cliExecutable` 仍指向本整合，還原啟用前的值；原本未設定時會移除該設定。若使用者已改為其他值，停用不覆寫該值。

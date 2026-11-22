@@ -26,7 +26,7 @@ goto launch
 if defined SWITCHER_BUILT goto build_failed
 
 :build
-echo Building Codex Account Switcher...
+echo Building Codex Roster...
 set "SWITCHER_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "SWITCHER_POWERSHELL=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%SWITCHER_POWERSHELL%" goto powershell_missing
@@ -56,6 +56,6 @@ exit /b 2
 
 :launch_failed
 echo.
-echo Could not start Codex Account Switcher.
+echo Could not start Codex Roster.
 pause
 exit /b 1

@@ -1259,9 +1259,9 @@ namespace CodexAccountSwitcher
             bool first;
             using (var mutex = new Mutex(true, "Local\\CodexAccountSwitcher-" + System.Security.Principal.WindowsIdentity.GetCurrent().User.Value, out first))
             {
-                if (!first) { MessageBox.Show("帳號切換器已經開啟，請使用原本的視窗。", "Codex 帳號切換器"); return 0; }
+                if (!first) { MessageBox.Show("Codex Roster 已經開啟，請使用原本的視窗。", "Codex Roster"); return 0; }
                 try { var app = new Application(); var view = new MainView(false); app.Run(view.Window); return 0; }
-                catch { MessageBox.Show("無法開啟帳號切換器。請確認使用 Windows 10 / 11 與 .NET Framework 4.8。", "Codex 帳號切換器"); return 1; }
+                catch { MessageBox.Show("無法開啟 Codex Roster。請確認使用 Windows 10 / 11 與 .NET Framework 4.8。", "Codex Roster"); return 1; }
                 finally { mutex.ReleaseMutex(); }
             }
         }

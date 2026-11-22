@@ -479,7 +479,7 @@ namespace CodexAccountSwitcher
                 process.BeginErrorReadLine();
                 using (cancellation.Register(Stop))
                 {
-                Send(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "codex_account_switcher", title = "Codex Account Switcher", version = "1.0.0" } } });
+                Send(new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "codex_account_switcher", title = "Codex Roster", version = "1.0.0" } } });
                     bool started = false;
                     string loginId = null;
                     while (true)

@@ -99,7 +99,7 @@ namespace CodexAccountSwitcher
                         method = "initialize",
                         @params = new
                         {
-                            clientInfo = new { name = "codex_account_switcher", title = "Codex Account Switcher", version = "1.1.0" },
+                            clientInfo = new { name = "codex_account_switcher", title = "Codex Roster", version = "1.1.0" },
                             capabilities = new { experimentalApi = true }
                         }
                     }, token).ConfigureAwait(false);

@@ -1,4 +1,4 @@
-# Codex 帳號切換器
+# Codex Roster
 
 Windows 原生、繁體中文的本機帳號管理小工具。使用 Windows 10 / 11 x64 與 .NET Framework 4.8，無須安裝 Python、Node.js 或額外套件。從 GitHub 取得原始碼後，雙擊根目錄的「Codex帳號切換器.cmd」即可開啟；若缺少執行檔或設定檔，啟動器會先自動建置。也可手動執行 `powershell -ExecutionPolicy Bypass -File .\build.ps1`，再開啟 `release\v1.6.19\CodexAccountSwitcher.exe`。
 
@@ -311,7 +311,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 1. 在切換器按「VS Code 整合…」中的「開啟整合安裝檔位置」，或找到 `release\v1.6.19\codex-account-switcher-vscode.vsix`。
 2. 在 VS Code 命令選單執行 `Extensions: Install from VSIX…`，選取該檔案。
-3. 執行 `Codex Account Switcher: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
+3. 執行 `Codex Roster: Enable Experimental Integration`，選取同一發行資料夾的 `ManagedBridge.exe`，閱讀並確認實驗功能說明。
 4. 等目前工作完成後，按 `Reload Window` 重新載入該視窗。首次啟用必須重新載入，新的 Codex 後端才會由整合管理。
 
 整合使用官方擴充套件標示為開發用途的 `chatgpt.cliExecutable` 設定。它具有 **application scope**，其他視窗或設定檔下次啟動時也可能受影響；其他尚未整合或無法確認狀態的視窗仍會阻擋切換。重載會影響整個對應 VS Code 視窗的擴充套件狀態與未送出的 Codex 草稿，並非只重載單一聊天。
@@ -320,7 +320,7 @@ v1.3.1 期間的桌面研究原型曾使用真正 App 通過「閒置查詢 → 
 
 確認閒置後，整合會關閉自己持有的後端輸入並等待正常退出；切換後由 companion 重新載入對應視窗恢復 Codex。**恢復不會自動送出訊息或接續對話**。若恢復未完成，可在「桌面控制…」按「恢復已暫停的桌面／VS Code」；它只處理已驗證、屬於相同登入快取且已閒置暫停的後端。仍未恢復時，依提示手動重新載入並確認登入帳號。
 
-停用時執行 `Codex Account Switcher: Disable Experimental Integration`。它會立即撤銷自動中止／暫停的授權，並在設定仍指向整合程式時還原原值；一般對話轉送會繼續。停用不會自動重載，待工作完成後可自行按 `Reload Window`；已暫停的後端也需重新載入才能恢復。
+停用時執行 `Codex Roster: Disable Experimental Integration`。它會立即撤銷自動中止／暫停的授權，並在設定仍指向整合程式時還原原值；一般對話轉送會繼續。停用不會自動重載，待工作完成後可自行按 `Reload Window`；已暫停的後端也需重新載入才能恢復。
 
 這項整合已在隔離的真實 VS Code 視窗，搭配官方 Codex 擴充套件與合成模型回覆，通過回合正常中止、後端自然退出、companion 重載及新後端恢復閒置驗證。**原對話是否恢復尚未確認，真實登入套用與跨帳號續聊尚未驗證**。詳細範圍見 [控制介面驗證](docs/runtime-control-validation.md)。
 
